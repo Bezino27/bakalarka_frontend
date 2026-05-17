@@ -1,6 +1,6 @@
 // app/(tabs-player)/_layout.tsx
 import React, { useCallback, useRef, useState, useContext, useEffect } from 'react';
-import { Tabs, useRouter } from 'expo-router';
+import { Tabs, useRouter, useSegments } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { TouchableOpacity, Image, View, Text, StyleSheet, DeviceEventEmitter } from 'react-native';
 import { useFetchWithAuth } from '@/hooks/fetchWithAuth';
@@ -8,10 +8,16 @@ import { useFocusEffect } from '@react-navigation/native';
 import { BASE_URL } from '@/hooks/api';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AuthContext } from '@/context/AuthContext';
+import { getConversations } from '@/hooks/chatApi';
+import * as Notifications from 'expo-notifications';
 
+type AnnouncementPreview = {
+    read_at?: string | null;
+};
 
 export default function PlayerTabsLayout() {
     const router = useRouter();
+    const segments = useSegments();
     const { fetchWithAuth } = useFetchWithAuth();
     const { isLoggedIn, accessToken } = useContext(AuthContext);
     const [unreadCount, setUnreadCount] = useState(0);
@@ -20,39 +26,58 @@ export default function PlayerTabsLayout() {
     const inflightRef = useRef(false);
     const abortedRef = useRef(false);
     const inflightAnnouncementsRef = useRef(false);
+    const lastAnnouncementsFetchRef = useRef(0);
+    const isAnnouncementsRoute = (segments as readonly string[]).includes("announcements");
 
     const fetchUnread = useCallback(async () => {
         if (isLoggedIn !== true || !accessToken || inflightRef.current) return;
         inflightRef.current = true;
         try {
-            const res = await fetchWithAuth(`${BASE_URL}/chat-users/`);
-            if (!res.ok) return;
-            const data = await res.json();
+            const data = await getConversations(fetchWithAuth);
             if (abortedRef.current) return;
-            const count = data.filter((u: any) => u?.has_unread).length;
+            const count = Array.isArray(data)
+                ? data.reduce((sum, conversation) => sum + Math.max(0, conversation.unread_count || 0), 0)
+                : 0;
             setUnreadCount(count);
+            await Notifications.setBadgeCountAsync(count);
         } catch (e) {
             if (!abortedRef.current) console.error("❌ Chyba pri načítaní správ:", e);
         } finally {
             inflightRef.current = false;
         }
     }, [isLoggedIn, accessToken, fetchWithAuth]);
-    const fetchUnreadAnnouncements = useCallback(async () => {
-    if (isLoggedIn !== true || !accessToken || inflightAnnouncementsRef.current) return;
-    inflightAnnouncementsRef.current = true;
+    const fetchUnreadAnnouncements = useCallback(async (force = false) => {
+        const now = Date.now();
+
+        if (isLoggedIn !== true || !accessToken || inflightAnnouncementsRef.current) return;
+
+        if (!force && isAnnouncementsRoute) {
+            return;
+        }
+
+        if (!force && now - lastAnnouncementsFetchRef.current < 15000) {
+            return;
+        }
+
+        inflightAnnouncementsRef.current = true;
+        lastAnnouncementsFetchRef.current = now;
+
         try {
             const res = await fetchWithAuth(`${BASE_URL}/announcements/`);
-            if (!res.ok) return;
-            const data = await res.json();
+            if (!res.ok) {
+                console.log("Unread announcements fetch failed:", res.status);
+                return;
+            }
+            const data: AnnouncementPreview[] = await res.json();
 
-            const unreadCount = data.filter((a: any) => !a.read_at).length;
+            const unreadCount = Array.isArray(data) ? data.filter((a) => !a.read_at).length : 0;
             setUnreadAnnouncements(unreadCount);
         } catch (e) {
-            console.error("❌ Chyba pri načítaní oznamov:", e);
+            console.log("Unread announcements fetch error:", e);
         } finally {
             inflightAnnouncementsRef.current = false;
         }
-    }, [isLoggedIn, accessToken, fetchWithAuth]);
+    }, [isLoggedIn, accessToken, fetchWithAuth, isAnnouncementsRoute]);
 
     useFocusEffect(
         useCallback(() => {
@@ -72,10 +97,17 @@ export default function PlayerTabsLayout() {
 
     useEffect(() => {
         const sub = DeviceEventEmitter.addListener("refreshAnnouncements", () => {
-            void fetchUnreadAnnouncements(); // ✅ okamžitý refresh badge
+            void fetchUnreadAnnouncements(true); // ✅ okamžitý refresh badge
         });
         return () => sub.remove();
         }, [fetchUnreadAnnouncements]);
+
+    useEffect(() => {
+        const sub = DeviceEventEmitter.addListener("refreshChatUnread", () => {
+            void fetchUnread();
+        });
+        return () => sub.remove();
+    }, [fetchUnread]);
 
     useEffect(() => {
         if (!isLoggedIn || !accessToken) return;
@@ -90,7 +122,6 @@ export default function PlayerTabsLayout() {
             screenOptions={{
                 headerStyle: {
                     height: 40 + insets.top,
-                    paddingTop: insets.top,
                     backgroundColor: "#fff",
                 },
                 tabBarActiveTintColor: '#D32F2F',     // 🔥 farba aktívnej ikony (napr. červená)

@@ -13,6 +13,7 @@ import {
 import { AuthContext } from '@/context/AuthContext';
 import { BASE_URL } from '@/hooks/api';
 import { useFetchWithAuth } from '@/hooks/fetchWithAuth';
+import { readJsonArrayOrThrow } from '@/hooks/readResponse';
 import { useRouter } from 'expo-router';
 
 
@@ -76,7 +77,7 @@ export default function TreningyCoachScreen() {
     const fetchTrainings = useCallback(async () => {
         try {
             const res = await fetchWithAuth(`${BASE_URL}/player-trainings/`);
-            const data = await res.json();
+            const data = await readJsonArrayOrThrow<Training>(res, 'Nepodarilo sa načítať tréningy.');
             setTrainings(data);
         } catch (error) {
             console.error("fetchTrainings error:", error);
@@ -91,7 +92,7 @@ export default function TreningyCoachScreen() {
             return;
         }
         void fetchTrainings();
-    }, [isLoggedIn, accessToken]);
+    }, [isLoggedIn, accessToken, fetchTrainings]);
 
     const groupedTrainings = coachCategories
         .filter((v, i, a) => a.indexOf(v) === i)
@@ -152,7 +153,7 @@ export default function TreningyCoachScreen() {
                                 onPress={async () => {
                                     try {
                                         const res = await fetchWithAuth(`${BASE_URL}/training-detail/${t.id}/`);
-                                        const data = await res.json();
+                                        if (!res.ok) throw new Error("Nepodarilo sa načítať tréning.");
 
                                         // Ak potrebuješ dáta posunúť do detailu cez params, urob to tu
                                         router.push({ pathname: "/(stack)/training/[id]", params: { id: String(t.id) } });

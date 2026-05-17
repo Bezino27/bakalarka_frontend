@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useContext, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -12,7 +12,6 @@ import {
   ScrollView, // ✅ pridané
 } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
-import { AuthContext } from "@/context/AuthContext";
 import { useFetchWithAuth } from "@/hooks/fetchWithAuth";
 import { BASE_URL } from "@/hooks/api";
 
@@ -20,7 +19,6 @@ export default function EditMatchScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { fetchWithAuth } = useFetchWithAuth();
-  const { accessToken } = useContext(AuthContext);
   const [isHome, setIsHome] = useState(false); 
   const [loading, setLoading] = useState(true);
   const [opponent, setOpponent] = useState("");
@@ -55,7 +53,7 @@ export default function EditMatchScreen() {
     };
 
     fetchMatch();
-  }, [id]);
+  }, [fetchWithAuth, id]);
 
   const handleSave = async () => {
     try {

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
     View,
     Text,
@@ -15,6 +15,25 @@ import DateTimePicker from "@react-native-community/datetimepicker";
 import { router } from "expo-router";
 import CustomSelectModal from "@/components/CustomSelectModal";
 
+type ClubUser = {
+    id: number;
+    name?: string;
+    username: string;
+};
+
+type Category = {
+    id: number;
+    name: string;
+};
+
+type CreatePaymentPayload = {
+    amount: string;
+    due_date: string;
+    description: string;
+    user_id?: number;
+    category_id?: number;
+};
+
 export default function CreatePaymentScreen() {
     const { fetchWithAuth } = useFetchWithAuth();
     const [userModalVisible, setUserModalVisible] = useState(false);
@@ -23,30 +42,34 @@ export default function CreatePaymentScreen() {
     const [description, setDescription] = useState("");
     const [dueDate, setDueDate] = useState(new Date());
     const [showPicker, setShowPicker] = useState(false);
-    const [users, setUsers] = useState([]);
-    const [categories, setCategories] = useState([]);
+    const [users, setUsers] = useState<ClubUser[]>([]);
+    const [categories, setCategories] = useState<Category[]>([]);
     const [showAdvanced, setShowAdvanced] = useState(false);
-    const [selectedUserId, setSelectedUserId] = useState(null);
-    const [selectedCategoryId, setSelectedCategoryId] = useState(null);
+    const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
+    const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
 
-    const fetchData = async () => {
+    const fetchData = useCallback(async () => {
         try {
             const [usersRes, catRes] = await Promise.all([
                 fetchWithAuth(`${BASE_URL}/users-in-club/`),
                 fetchWithAuth(`${BASE_URL}/categories-in-club/`),
             ]);
-            const usersData = await usersRes.json();
-            const catData = await catRes.json();
-            setUsers(usersData);
-            setCategories(catData);
+            if (!usersRes.ok || !catRes.ok) {
+                throw new Error("Nepodarilo sa načítať používateľov alebo kategórie");
+            }
+
+            const usersData: ClubUser[] = await usersRes.json();
+            const catData: Category[] = await catRes.json();
+            setUsers(Array.isArray(usersData) ? usersData : []);
+            setCategories(Array.isArray(catData) ? catData : []);
         } catch (e) {
             console.error("❌ Chyba pri načítaní údajov:", e);
         }
-    };
+    }, [fetchWithAuth]);
 
     useEffect(() => {
         fetchData();
-    }, []);
+    }, [fetchData]);
 
     const handleSubmit = async () => {
         if (!amount) {
@@ -54,7 +77,7 @@ export default function CreatePaymentScreen() {
             return;
         }
 
-        const payload = {
+        const payload: CreatePaymentPayload = {
             amount,
             due_date: dueDate.toISOString().split("T")[0],
             description,

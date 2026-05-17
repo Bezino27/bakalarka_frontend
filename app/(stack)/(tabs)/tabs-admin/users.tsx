@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
     View,
     Text,
@@ -50,27 +50,27 @@ export default function AdminUsersScreen() {
     const [searchQuery, setSearchQuery] = useState(""); 
     const [refreshing, setRefreshing] = useState(false);
 
-    const fetchUsers = async () => {
+    const fetchUsers = useCallback(async () => {
         try {
             const res = await fetchWithAuth(`${BASE_URL}/users-in-club/`);
             const data = await res.json();
-            setUsers(data);
+            setUsers(Array.isArray(data) ? data : []);
         } catch (err) {
             console.error("❌ Chyba pri načítaní používateľov:", err);
         } finally {
             setLoading(false);
         }
-    };
+    }, [fetchWithAuth]);
 
-    const fetchCategories = async () => {
+    const fetchCategories = useCallback(async () => {
         try {
             const res = await fetchWithAuth(`${BASE_URL}/categories-in-club/`);
             const data = await res.json();
-            setCategories(data);
+            setCategories(Array.isArray(data) ? data : []);
         } catch (err) {
             console.error("❌ Chyba pri načítaní kategórií:", err);
         }
-    };
+    }, [fetchWithAuth]);
 
     const handleAddRole = async () => {
         if (!selectedUserId || !selectedCategoryId || !selectedRole) {
@@ -93,7 +93,7 @@ export default function AdminUsersScreen() {
         if (res.ok) {
             Alert.alert("✅ Rola pridaná");
             setModalVisible(false);
-            fetchUsers();
+            void fetchUsers();
         } else {
             const err = await res.json();
             Alert.alert("❌ Chyba", err.error || "Nepodarilo sa pridať rolu");
@@ -113,16 +113,16 @@ export default function AdminUsersScreen() {
 
         if (res.ok) {
             Alert.alert("✅ Rola odstránená");
-            fetchUsers();
+            void fetchUsers();
         } else {
             Alert.alert("❌ Chyba pri odstraňovaní");
         }
     };
 
     useEffect(() => {
-        fetchUsers();
-        fetchCategories();
-    }, []);
+        void fetchUsers();
+        void fetchCategories();
+    }, [fetchCategories, fetchUsers]);
 
     if (loading) return <ActivityIndicator style={{ marginTop: 50 }} />;
 

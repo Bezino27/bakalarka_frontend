@@ -1,11 +1,11 @@
-import React, { useContext, useState } from 'react';
+import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, ScrollView } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
-import { AuthContext } from '@/context/AuthContext';
 import { BASE_URL } from '@/hooks/api';
+import { useFetchWithAuth } from '@/hooks/fetchWithAuth';
 
 export default function UploadStatementScreen() {
-    const { accessToken } = useContext(AuthContext);
+    const { fetchWithAuth } = useFetchWithAuth();
     const [loading, setLoading] = useState(false);
     const [rawResponse, setRawResponse] = useState<string | null>(null);
 
@@ -26,11 +26,8 @@ export default function UploadStatementScreen() {
         } as any);
 
         try {
-            const res = await fetch(`${BASE_URL}/upload-pdf-chatgpt/`, {
+            const res = await fetchWithAuth(`${BASE_URL}/upload-pdf-chatgpt/`, {
                 method: 'POST',
-                headers: {
-                    Authorization: `Bearer ${accessToken}`,
-                },
                 body: formData,
             });
 

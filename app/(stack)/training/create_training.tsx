@@ -349,19 +349,7 @@ export default function CreateEventScreen() {
             <TouchableOpacity
                 onPress={() => {
                   if (Platform.OS === "android") {
-                    // Android – postupne vyberieš dátum a čas
-                    DateTimePickerAndroid.open({
-                      value: date,
-                      mode: "date",
-                      onChange: (e, selected) => {
-                        if (e.type === "set" && selected) {
-                          const next = new Date(date);
-                          next.setFullYear(selected.getFullYear(), selected.getMonth(), selected.getDate());
-                          setDate(next);
-                          openAndroidTime(next);
-                        }
-                      },
-                    });
+                    openAndroidDate();
                   } else {
                     setShowDateTimePicker((s) => !s);
                   }

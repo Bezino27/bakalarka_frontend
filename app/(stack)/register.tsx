@@ -122,7 +122,7 @@ export default function RegisterScreen() {
         const match = dateStr.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
         if (!match) return null;
 
-        let [_, day, month, year] = match;
+        let [, day, month, year] = match;
         if (day.length === 1) day = '0' + day;
         if (month.length === 1) month = '0' + month;
 

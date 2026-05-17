@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator }
 import { useRouter } from 'expo-router';
 import { useFetchWithAuth } from '@/hooks/fetchWithAuth';
 import { BASE_URL } from '@/hooks/api';
-import {OrderDto} from "@/app/(stack)/menu/types/orders";
+import { OrderDto } from "@/types/orders";
 
 export default function OrdersList() {
     const router = useRouter();
@@ -18,7 +18,7 @@ export default function OrdersList() {
             if (res.ok) setOrders(await res.json());
             setLoading(false);
         })();
-    }, []);
+    }, [fetchWithAuth]);
     const formatDateTime = (iso: string) => {
         const d = new Date(iso);
         const day = d.getDate();                 // bez počiatočnej nuly

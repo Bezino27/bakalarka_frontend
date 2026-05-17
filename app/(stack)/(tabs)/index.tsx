@@ -16,7 +16,7 @@ export default function TabsIndex() {
     if (mounted && !isLoggedIn) {
       router.replace("/login");
     }
-  }, [isLoggedIn, mounted]);
+  }, [isLoggedIn, mounted, router]);
 
   if (!isLoggedIn) {
     return (

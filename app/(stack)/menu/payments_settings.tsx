@@ -1,8 +1,7 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useContext, useEffect, useState } from "react";
 import { View, Text, TextInput, Alert, TouchableOpacity, StyleSheet, ScrollView } from "react-native";
 import { useFetchWithAuth } from "@/hooks/fetchWithAuth";
 import { BASE_URL } from "@/hooks/api";
-import { useContext } from "react";
 import { AuthContext } from "@/context/AuthContext";
 import { Picker } from "@react-native-picker/picker"; // nezabudni importovať
 
@@ -14,9 +13,10 @@ export default function PaymentSettingsScreen() {
     const [dueDay, setDueDay] = useState("10");
     const [cycle, setCycle] = useState("monthly");
 
-    const loadSettings = async () => {
+    const loadSettings = useCallback(async () => {
+        if (!userClub?.id) return;
         try {
-            const res = await fetchWithAuth(`${BASE_URL}/club-payments-settings/${userClub?.id}/`);
+            const res = await fetchWithAuth(`${BASE_URL}/club-payments-settings/${userClub.id}/`);
             const data = await res.json();
             setIban(data.iban);
             setPrefix(data.variable_symbol_prefix);
@@ -25,7 +25,7 @@ export default function PaymentSettingsScreen() {
         } catch (e) {
             console.error("❌ Nepodarilo sa načítať nastavenia:", e);
         }
-    };
+    }, [fetchWithAuth, userClub?.id]);
 
     const saveSettings = async () => {
         try {
@@ -48,8 +48,8 @@ export default function PaymentSettingsScreen() {
     };
 
     useEffect(() => {
-        loadSettings();
-    }, []);
+        void loadSettings();
+    }, [loadSettings]);
 
     return (
         <ScrollView style={styles.container}>

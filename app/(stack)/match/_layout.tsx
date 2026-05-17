@@ -1,4 +1,4 @@
-import {Stack, Tabs, useRouter} from 'expo-router';
+import {Stack, useRouter} from 'expo-router';
 import {Image, TouchableOpacity} from "react-native";
 import React from "react";
 

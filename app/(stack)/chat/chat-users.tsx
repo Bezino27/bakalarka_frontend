@@ -1,238 +1,560 @@
-import React, { useEffect, useState, useCallback, useContext } from "react";
+import React, { useCallback, useContext, useRef, useState } from "react";
 import {
-    View,
-    Text,
-    TouchableOpacity,
-    ScrollView,
-    StyleSheet,
-    ActivityIndicator,
-    TextInput,
-    ImageBackground,
-    Image,
-    Dimensions
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
-import { useRouter } from "expo-router";
-import { useFetchWithAuth } from "@/hooks/fetchWithAuth";
-import { BASE_URL } from "@/hooks/api";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { useFocusEffect } from "@react-navigation/native";
+import { router, useFocusEffect } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+import { COLORS } from "@/constants/Colors";
 import { AuthContext } from "@/context/AuthContext";
+import { ChatConversation, getConversations } from "@/hooks/chatApi";
+import { useFetchWithAuth } from "@/hooks/fetchWithAuth";
 
-interface User {
-    id: number;
-    username: string;
-    full_name: string;
-    last_message_timestamp?: string;
-    has_unread?: boolean;
-    number: number;
-}
+export default function ChatUsersScreen() {
+  const { fetchWithAuth } = useFetchWithAuth();
+  const { userRoles, currentRole } = useContext(AuthContext);
+  const insets = useSafeAreaInsets();
 
-export default function ChatUserList() {
-    const { fetchWithAuth } = useFetchWithAuth();
-    const [users, setUsers] = useState<User[]>([]);
-    const [filteredUsers, setFilteredUsers] = useState<User[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [search, setSearch] = useState("");
-    const router = useRouter();
-    const [allUsers, setAllUsers] = useState<User[]>([]);
-    const [recentUsers, setRecentUsers] = useState<User[]>([]);
-    const { isLoggedIn, accessToken } = useContext(AuthContext);
+  const [conversations, setConversations] = useState<ChatConversation[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const isLoadingConversationsRef = useRef(false);
+  const canCreateGroups =
+    currentRole?.role?.toLowerCase() === "coach" ||
+    userRoles.some((role) => role.role?.toLowerCase() === "coach");
+  const bottomPadding = Math.max(insets.bottom + 12, 24);
 
-    const filterUsers = (text: string, allUsers: User[]) => {
-        const lower = text.toLowerCase();
-        const filtered = allUsers.filter(
-            (u) =>
-                u.full_name.toLowerCase().includes(lower) ||
-                u.username.toLowerCase().includes(lower)
+  const loadConversations = useCallback(
+    async (showLoader = true) => {
+      if (isLoadingConversationsRef.current) return;
+
+      try {
+        isLoadingConversationsRef.current = true;
+        if (showLoader) setLoading(true);
+
+        const data = await getConversations(fetchWithAuth);
+        setConversations(data);
+      } catch (error) {
+        console.log("CHAT_CONVERSATIONS_ERROR:", error);
+        Alert.alert(
+          "Chyba",
+          error instanceof Error
+            ? error.message
+            : "Nepodarilo sa načítať konverzácie."
         );
-        setFilteredUsers(filtered);
-    };
+      } finally {
+        isLoadingConversationsRef.current = false;
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [fetchWithAuth]
+  );
 
-    useFocusEffect(
-        useCallback(() => {
-            if (!isLoggedIn || !accessToken) return; // ← zabráni zbytočnému fetchu
+  useFocusEffect(
+    useCallback(() => {
+      loadConversations(true);
+    }, [loadConversations])
+  );
 
-            const fetchUsers = async () => {
-                setLoading(true);
-                try {
-                    const res = await fetchWithAuth(`${BASE_URL}/chat-users/`);
-                    if (!res.ok) throw new Error("Chyba odpovede");
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadConversations(false);
+  };
 
-                    const data = await res.json();
-                    setAllUsers(data);
-                    setRecentUsers(data.filter((u: User) => u.last_message_timestamp));
-                    setFilteredUsers(data.filter((u: User) => u.last_message_timestamp));
-                } catch (error) {
-                    console.error("❌ Chyba pri načítaní používateľov:", error);
-                } finally {
-                    setLoading(false);
-                }
-            };
+  const openConversation = (conversation: ChatConversation) => {
+    router.push({
+      pathname: "/(stack)/chat/[conversationId]",
+      params: {
+        conversationId: String(conversation.id),
+        name: encodeURIComponent(conversation.title || "Chat"),
+      },
+    } as any);
+  };
 
-            fetchUsers();
-        }, [isLoggedIn, accessToken])
-    );
+  const goToNewDirect = () => {
+    router.push("/(stack)/chat/new-direct" as any);
+  };
 
-    useEffect(() => {
-        if (search.trim() === "") {
-            setFilteredUsers(recentUsers); // ⬅️ len tých s ktorými písal
-        } else {
-            filterUsers(search, allUsers); // ⬅️ všetci z backendu
-        }
-    }, [search, users]);
-
-    if (loading) {
-        return (
-            <View style={styles.loading}>
-                <ActivityIndicator size="large" color="#D32F2F" />
-                <Text style={{ marginTop: 10 }}>Načítavam používateľov...</Text>
-            </View>
-        );
+  const goToNewGroup = () => {
+    if (!canCreateGroups) {
+      Alert.alert("Bez oprávnenia", "Skupinový chat môže vytvoriť iba tréner.");
+      return;
     }
 
+    router.push("/(stack)/chat/new-group" as any);
+  };
+
+  const formatTime = (value?: string | null) => {
+    if (!value) return "";
+
+    const date = new Date(value);
+    const now = new Date();
+
+    const isToday = date.toDateString() === now.toDateString();
+
+    const yesterday = new Date();
+    yesterday.setDate(now.getDate() - 1);
+    const isYesterday = date.toDateString() === yesterday.toDateString();
+
+    if (isToday) {
+      return date.toLocaleTimeString("sk-SK", {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    }
+
+    if (isYesterday) {
+      return "Včera";
+    }
+
+    return date.toLocaleDateString("sk-SK", {
+      day: "numeric",
+      month: "numeric",
+    });
+  };
+
+  const getLastMessageText = (conversation: ChatConversation) => {
+    const last = conversation.last_message;
+
+    if (!last) return "Zatiaľ žiadne správy";
+    if (last.deleted_at) return "Správa bola odstránená";
+
+    const prefix = conversation.type === "group" ? `${last.sender_name}: ` : "";
+    return `${prefix}${last.text}`;
+  };
+
+  const renderConversation = ({ item }: { item: ChatConversation }) => {
+    const hasUnread = item.unread_count > 0;
+
+    const initials = (item.title || "CH")
+      .split(" ")
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part.charAt(0).toUpperCase())
+      .join("");
+
     return (
-        <SafeAreaView style={{flex:1, backgroundColor:'white'}} edges={["left", "right", "bottom"]}>
-            <View style={styles.container}>
+      <TouchableOpacity
+        style={[
+          styles.conversationCard,
+          hasUnread && styles.conversationCardUnread,
+        ]}
+        activeOpacity={0.85}
+        onPress={() => openConversation(item)}
+      >
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>{initials || "CH"}</Text>
 
-                <TextInput
-                    style={styles.searchInput}
-                    placeholder="Hľadať meno alebo používateľa..."
-                    value={search}
-                    onChangeText={setSearch}
-                />
-
-                <ScrollView style={{ flex: 1 }}>
-                    {filteredUsers.map((user) => (
-                        <TouchableOpacity
-                            key={user.id}
-                            onPress={() =>
-                                router.push({
-                                    pathname: `/chat/${user.id}`,
-                                    params: { name: encodeURIComponent(user.full_name) },
-                                })
-                            }
-                        >
-                            <ImageBackground
-                                source={require("@/assets/images/DMpozadie.png")} // ← cesta k tvojmu obrázku
-                                style={[styles.userCard, user.has_unread && styles.highlightedCard]}
-                                imageStyle={{ borderRadius: 12 }}
-                            >
-                                <View style={styles.avatarCircle}>
-                                    <View style={{ position: 'relative', width: 60, height: 60 }}>
-                                        <Image
-                                            source={require('@/assets/images/dres_final.png')} // ← tu bude tvoj obrázok dresu
-                                            style={{ width: 60, height: 60, opacity: 0.5 }}
-                                        />
-                                        <Text style={{
-                                            position: 'absolute',
-                                            top: 15,
-                                            left: 0,
-                                            right: 0,
-                                            textAlign: 'center',
-                                            fontSize: 20,
-                                            fontWeight: 'bold',
-                                            color: '#fff',
-                                        }}>
-                                            {user.number}
-                                        </Text>
-                                    </View>
-                                </View>
-                                <View>
-                                    <Text style={styles.userName}>{user.full_name}</Text>
-                                    <Text style={styles.username}>@{user.username}</Text>
-                                    {user.last_message_timestamp && (
-                                        <Text style={styles.timestamp}>
-                                            Posledná správa:{" "}
-                                            {new Date(user.last_message_timestamp).toLocaleString("sk-SK", {
-                                                hour: "2-digit",
-                                                minute: "2-digit",
-                                                day: "2-digit",
-                                                month: "2-digit",
-                                            })}
-                                        </Text>
-                                    )}
-                                </View>
-                            </ImageBackground>
-                        </TouchableOpacity>
-                    ))}
-                </ScrollView>
+          {item.type === "group" && (
+            <View style={styles.groupBadge}>
+              <Ionicons name="people" size={12} color={COLORS.white} />
             </View>
-        </SafeAreaView>
+          )}
+        </View>
+
+        <View style={styles.conversationContent}>
+          <View style={styles.conversationTopRow}>
+            <Text
+              style={[
+                styles.conversationTitle,
+                hasUnread && styles.conversationTitleUnread,
+              ]}
+              numberOfLines={1}
+            >
+              {item.title}
+            </Text>
+
+            <Text style={styles.conversationTime}>
+              {formatTime(item.last_message?.created_at || item.updated_at)}
+            </Text>
+          </View>
+
+          <View style={styles.conversationBottomRow}>
+            <Text
+              style={[
+                styles.lastMessage,
+                hasUnread && styles.lastMessageUnread,
+              ]}
+              numberOfLines={1}
+            >
+              {getLastMessageText(item)}
+            </Text>
+
+            {hasUnread && (
+              <View style={styles.unreadBadge}>
+                <Text style={styles.unreadText}>
+                  {item.unread_count > 99 ? "99+" : item.unread_count}
+                </Text>
+              </View>
+            )}
+          </View>
+        </View>
+      </TouchableOpacity>
     );
+  };
+
+  const renderEmpty = () => {
+    if (loading) return null;
+
+    return (
+      <View style={styles.emptyWrap}>
+        <View style={styles.emptyIcon}>
+          <Ionicons
+            name="chatbubble-ellipses-outline"
+            size={38}
+            color={COLORS.primary}
+          />
+        </View>
+
+        <Text style={styles.emptyTitle}>Zatiaľ nemáš žiadne správy</Text>
+
+        <Text style={styles.emptyText}>
+          Začni nový chat s trénerom alebo hráčom.
+        </Text>
+
+        <TouchableOpacity
+          style={styles.emptyButton}
+          activeOpacity={0.85}
+          onPress={goToNewDirect}
+        >
+          <Ionicons name="add" size={20} color={COLORS.white} />
+          <Text style={styles.emptyButtonText}>Začať nový chat</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
+  if (loading) {
+    return (
+      <View style={styles.loadingWrap}>
+        <ActivityIndicator size="large" color={COLORS.primary} />
+        <Text style={styles.loadingText}>Načítavam správy...</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.background}>
+      <View style={[styles.overlay, { paddingBottom: bottomPadding }]}>
+
+        <View style={styles.actionsRow}>
+          <TouchableOpacity
+            style={styles.primaryAction}
+            activeOpacity={0.85}
+            onPress={goToNewDirect}
+          >
+            <Ionicons name="person-add-outline" size={18} color={COLORS.white} />
+            <Text style={styles.primaryActionText}>Nový chat</Text>
+          </TouchableOpacity>
+
+          {canCreateGroups && (
+            <TouchableOpacity
+              style={styles.secondaryAction}
+              activeOpacity={0.85}
+              onPress={goToNewGroup}
+            >
+              <Ionicons name="people-outline" size={18} color={COLORS.primary} />
+              <Text style={styles.secondaryActionText}>Skupina</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        <FlatList
+          data={conversations}
+          keyExtractor={(item) => String(item.id)}
+          renderItem={renderConversation}
+          contentContainerStyle={[
+            styles.listContent,
+            { paddingBottom: 28 + bottomPadding },
+            conversations.length === 0 && styles.listContentEmpty,
+          ]}
+          showsVerticalScrollIndicator={false}
+          ListEmptyComponent={renderEmpty}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={COLORS.primary}
+              colors={[COLORS.primary]}
+            />
+          }
+        />
+      </View>
+    </View>
+  );
 }
-const screenWidth = Dimensions.get("window").width;
-const isSmallDevice = screenWidth < 380;
 
 const styles = StyleSheet.create({
-    container: {
-        padding: isSmallDevice ? 10 : 20,
-        backgroundColor: "#fff",
-        flex: 1,
-    },
-    searchInput: {
-        backgroundColor: "#f0f0f0",
-        borderRadius: 10,
-        paddingHorizontal: isSmallDevice ? 10 : 15,
-        paddingVertical: isSmallDevice ? 8 : 10,
-        marginBottom: 20,
-        fontSize: isSmallDevice ? 14 : 16,
-    },
-    userCard: {
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: "#fafafa",
-        padding: isSmallDevice ? 10 : 16,
-        borderRadius: 12,
-        marginBottom: 14,
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.08,
-        shadowRadius: 4,
-        elevation: 2,
-    },
-    userName: {
-        fontSize: isSmallDevice ? 16 : 18,
-        fontWeight: "600",
-        color: "#111",
-    },
-    username: {
-        fontSize: isSmallDevice ? 12 : 14,
-        color: "#555",
-    },
-    timestamp: {
-        fontSize: isSmallDevice ? 11 : 12,
-        color: "#999",
-        marginTop: 4,
-    },
-    avatarCircle: {
-        width: 50,
-        height: 50,
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginRight: isSmallDevice ? 8 : 12,
-    },
-    header: {
-        fontSize: 22,
-        fontWeight: "bold",
-        marginBottom: 10,
-        color: "#D32F2F",
-    },
+  background: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+  },
 
-    highlightedCard: {
-        backgroundColor: "#ffeaea",
-        borderColor: "#D32F2F",
-        borderWidth: 1,
-    },
+  overlay: {
+    flex: 1,
+    paddingHorizontal: 18,
+    paddingTop: 18,
+  },
 
-    loading: {
-        flex: 1,
-        justifyContent: "center",
-        alignItems: "center",
-    },
+  loadingWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.background,
+  },
 
-    avatarText: {
-        color: '#fff',
-        fontWeight: 'bold',
-        fontSize: 20,
-    },
+  loadingText: {
+    marginTop: 12,
+    color: COLORS.textMuted,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+
+  headerSection: {
+    marginBottom: 14,
+  },
+
+  pageTitle: {
+    fontSize: 28,
+    fontWeight: "900",
+    color: COLORS.text,
+    letterSpacing: -0.5,
+  },
+
+  pageSubtitle: {
+    marginTop: 5,
+    fontSize: 14,
+    color: COLORS.textMuted,
+    lineHeight: 20,
+  },
+
+  actionsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 16,
+  },
+
+  primaryAction: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: 18,
+    backgroundColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+    shadowColor: COLORS.shadow,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.16,
+    shadowRadius: 14,
+    elevation: 4,
+  },
+
+  primaryActionText: {
+    color: COLORS.white,
+    fontSize: 15,
+    fontWeight: "800",
+  },
+
+  secondaryAction: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: 18,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+
+  secondaryActionText: {
+    color: COLORS.primary,
+    fontSize: 15,
+    fontWeight: "800",
+  },
+
+  listContent: {
+    paddingBottom: 28,
+  },
+
+  listContentEmpty: {
+    flexGrow: 1,
+  },
+
+  conversationCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: COLORS.cardSoft,
+    borderRadius: 22,
+    padding: 13,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    shadowColor: COLORS.shadow,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    elevation: 2,
+  },
+
+  conversationCardUnread: {
+    borderColor: COLORS.primary,
+    backgroundColor: COLORS.card,
+  },
+
+  avatar: {
+    width: 52,
+    height: 52,
+    borderRadius: 18,
+    backgroundColor: COLORS.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 12,
+    position: "relative",
+  },
+
+  avatarText: {
+    color: COLORS.primary,
+    fontSize: 17,
+    fontWeight: "900",
+  },
+
+  groupBadge: {
+    position: "absolute",
+    right: -3,
+    bottom: -3,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: COLORS.card,
+  },
+
+  conversationContent: {
+    flex: 1,
+    minWidth: 0,
+  },
+
+  conversationTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+
+  conversationTitle: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: "700",
+    color: COLORS.text,
+  },
+
+  conversationTitleUnread: {
+    fontWeight: "900",
+  },
+
+  conversationTime: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+    fontWeight: "600",
+  },
+
+  conversationBottomRow: {
+    marginTop: 5,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+
+  lastMessage: {
+    flex: 1,
+    fontSize: 13,
+    color: COLORS.textMuted,
+    lineHeight: 18,
+  },
+
+  lastMessageUnread: {
+    color: COLORS.text,
+    fontWeight: "700",
+  },
+
+  unreadBadge: {
+    minWidth: 24,
+    height: 24,
+    borderRadius: 12,
+    paddingHorizontal: 7,
+    backgroundColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  unreadText: {
+    color: COLORS.white,
+    fontSize: 11,
+    fontWeight: "900",
+  },
+
+  emptyWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 28,
+  },
+
+  emptyIcon: {
+    width: 74,
+    height: 74,
+    borderRadius: 26,
+    backgroundColor: COLORS.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 18,
+  },
+
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: "900",
+    color: COLORS.text,
+    textAlign: "center",
+  },
+
+  emptyText: {
+    marginTop: 8,
+    fontSize: 14,
+    color: COLORS.textMuted,
+    textAlign: "center",
+    lineHeight: 21,
+  },
+
+  emptyButton: {
+    marginTop: 20,
+    minHeight: 48,
+    borderRadius: 18,
+    paddingHorizontal: 18,
+    backgroundColor: COLORS.primary,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+
+  emptyButtonText: {
+    color: COLORS.white,
+    fontSize: 15,
+    fontWeight: "800",
+  },
 });

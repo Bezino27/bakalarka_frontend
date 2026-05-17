@@ -13,12 +13,12 @@ import {
   Dimensions,
   Keyboard,
   TouchableWithoutFeedback,
+  BackHandler,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { AuthContext } from '@/context/AuthContext';
 import { loginWithCredentials } from '@/hooks/authHelpers';
-import { BackHandler } from "react-native";
 
 
 export default function LoginScreen() {
@@ -42,7 +42,7 @@ export default function LoginScreen() {
     }
     const backHandler = BackHandler.addEventListener("hardwareBackPress", () => true); // zakáže späť
     return () => backHandler.remove(); // cleanup
-  }, [isLoggedIn]);
+  }, [isLoggedIn, accessToken, router]);
 
   const handleLogin = async () => {
     setLoading(true);
@@ -67,6 +67,15 @@ export default function LoginScreen() {
       setLoading(false);
     }
   };
+
+  if (isLoggedIn === null || (isLoggedIn && accessToken)) {
+    return (
+      <SafeAreaView style={styles.loadingContainer}>
+        <Image source={require('@/assets/images/splashscreen_logo.png')} style={styles.loadingLogo} />
+        <ActivityIndicator size="large" color="#D32F2F" />
+      </SafeAreaView>
+    );
+  }
 
   return (
       <SafeAreaView style={{ flex: 1, backgroundColor: '#e0e0e0' }}>
@@ -233,5 +242,17 @@ const styles = StyleSheet.create({
   },
   logoContainer: {
     alignItems: 'center',
+  },
+  loadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff',
+  },
+  loadingLogo: {
+    width: 180,
+    height: 180,
+    marginBottom: 24,
+    resizeMode: 'contain',
   },
 });

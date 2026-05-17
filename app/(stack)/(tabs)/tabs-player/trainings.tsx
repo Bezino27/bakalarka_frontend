@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useContext, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useContext, useRef, useCallback, useMemo } from "react";
 import {
     View,
     Text,
@@ -8,13 +8,30 @@ import {
     StyleSheet,
     Modal,
     Pressable,
-} from 'react-native';
-import { useFetchWithAuth } from '@/hooks/fetchWithAuth';
-import { BASE_URL } from '@/hooks/api';
-import { useRouter } from 'expo-router';
-import { AuthContext } from '@/context/AuthContext';
+    RefreshControl,
+} from "react-native";
+import { useFetchWithAuth } from "@/hooks/fetchWithAuth";
+import { BASE_URL } from "@/hooks/api";
+import { readJsonArrayOrThrow } from "@/hooks/readResponse";
+import { useRouter } from "expo-router";
+import { AuthContext } from "@/context/AuthContext";
+import { COLORS } from "@/constants/Colors";
 
-const monthNames = ['Jún', 'Júl', 'August', 'September', 'Október', 'November', 'December', 'Január', 'Február', 'Marec', 'Apríl', 'Máj'];
+const monthNames = [
+    "Jún",
+    "Júl",
+    "August",
+    "September",
+    "Október",
+    "November",
+    "December",
+    "Január",
+    "Február",
+    "Marec",
+    "Apríl",
+    "Máj",
+];
+
 const monthIndexes = [5, 6, 7, 8, 9, 10, 11, 0, 1, 2, 3, 4];
 
 const getSeasonLabel = (date: Date) => {
@@ -23,6 +40,8 @@ const getSeasonLabel = (date: Date) => {
     return month >= 5 ? `${year}/${year + 1}` : `${year - 1}/${year}`;
 };
 
+type TrainingStatus = "present" | "absent" | "unknown";
+
 type Training = {
     id: number;
     description: string;
@@ -30,8 +49,74 @@ type Training = {
     location: string;
     category: number;
     category_name: string;
-    user_status: 'present' | 'absent' | 'unknown';
+    user_status: TrainingStatus;
 };
+
+const STATUS_META: Record<
+    TrainingStatus,
+    {
+        text: string;
+        color: string;
+        soft: string;
+    }
+> = {
+    present: {
+        text: "Zúčastnil si sa",
+        color: COLORS.success,
+        soft: COLORS.successSoft,
+    },
+    absent: {
+        text: "Nezúčastnil si sa",
+        color: COLORS.danger,
+        soft: COLORS.dangerSoft,
+    },
+    unknown: {
+        text: "Nezodpovedal si",
+        color: COLORS.neutral,
+        soft: COLORS.neutralSoft,
+    },
+};
+
+function getReadableProgressColor(percent: number) {
+    if (percent < 40) return COLORS.danger;
+    if (percent < 70) return "#F59E0B";
+    return COLORS.success;
+}
+
+function formatTrainingDate(dateString: string) {
+    const dateObj = new Date(dateString);
+
+    return {
+        date: dateObj.toLocaleDateString("sk-SK", {
+            weekday: "long",
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+        }),
+        time: dateObj.toLocaleTimeString("sk-SK", {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+        }),
+    };
+}
+
+function buildSeasonOptions(trainings: Training[]) {
+    const seasonsFromTrainings = Array.from(
+        new Set(trainings.map((training) => getSeasonLabel(new Date(training.date))))
+    );
+
+    const currentSeason = getSeasonLabel(new Date());
+    const nextSeason = getSeasonLabel(new Date(new Date().getFullYear() + 1, 6, 1));
+
+    return Array.from(new Set([currentSeason, nextSeason, ...seasonsFromTrainings])).sort(
+        (a, b) => {
+            const [aStart] = a.split("/").map(Number);
+            const [bStart] = b.split("/").map(Number);
+            return bStart - aStart;
+        }
+    );
+}
 
 export default function TrainingsScreen() {
     const { fetchWithAuth } = useFetchWithAuth();
@@ -40,254 +125,391 @@ export default function TrainingsScreen() {
 
     const [trainings, setTrainings] = useState<Training[]>([]);
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
 
     const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth());
     const [selectedSeason, setSelectedSeason] = useState<string>(getSeasonLabel(new Date()));
+
     const [seasonPickerVisible, setSeasonPickerVisible] = useState(false);
     const [monthPickerVisible, setMonthPickerVisible] = useState(false);
 
     const inflightRef = useRef(false);
     const abortedRef = useRef(false);
 
-    const fetchTrainings = useCallback(async () => {
-        if (inflightRef.current) return;
-        inflightRef.current = true;
+    const loadTrainings = useCallback(
+        async (silent = false) => {
+            if (!isLoggedIn || !accessToken) {
+                setLoading(false);
+                return;
+            }
 
-        try {
-            let url = `${BASE_URL}/trainings_optimalization/history/?season=${selectedSeason}`;
-            if (selectedMonth !== -1) url += `&month=${selectedMonth}`;
+            if (inflightRef.current) return;
 
-            const res = await fetchWithAuth(url);
-            if (!res.ok) return;
-            const data: Training[] = await res.json();
-            if (abortedRef.current) return;
+            abortedRef.current = false;
+            inflightRef.current = true;
 
-            setTrainings(data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
-        } catch (err) {
-            console.error('Chyba pri načítaní tréningov:', err);
-        } finally {
-            inflightRef.current = false;
-            if (!abortedRef.current) setLoading(false);
-        }
-    }, [fetchWithAuth, selectedSeason, selectedMonth]);
+            if (!silent) {
+                setLoading(true);
+            }
+
+            try {
+                let url = `${BASE_URL}/trainings_optimalization/history/?season=${selectedSeason}`;
+
+                if (selectedMonth !== -1) {
+                    url += `&month=${selectedMonth}`;
+                }
+
+                const res = await fetchWithAuth(url);
+
+                const data = await readJsonArrayOrThrow<Training>(res, "Nepodarilo sa načítať tréningy.");
+
+                if (abortedRef.current) return;
+
+                const now = new Date();
+
+                const pastTrainings = data.filter((training) => {
+                    const trainingDate = new Date(training.date);
+                    return trainingDate.getTime() <= now.getTime();
+                });
+
+                setTrainings(
+                    pastTrainings.sort(
+                        (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+                    )
+                );
+            } catch (err) {
+                console.error("Chyba pri načítaní tréningov:", err);
+            } finally {
+                inflightRef.current = false;
+
+                if (!abortedRef.current) {
+                    setLoading(false);
+                    setRefreshing(false);
+                }
+            }
+        },
+        [accessToken, fetchWithAuth, isLoggedIn, selectedMonth, selectedSeason]
+    );
 
     useEffect(() => {
-        if (!isLoggedIn || !accessToken) {
-            setLoading(false);
-            return;
-        }
-        abortedRef.current = false;
-        void fetchTrainings();
+        void loadTrainings();
+
         return () => {
             abortedRef.current = true;
         };
-    }, [isLoggedIn, accessToken, fetchTrainings]);
+    }, [loadTrainings]);
 
-    // dostupné sezóny z dát (len pre výber)
-    const allSeasons = Array.from(new Set(trainings.map(t => getSeasonLabel(new Date(t.date))))).sort().reverse();
-    const allCategories = Array.from(new Set(trainings.map(t => t.category_name)));
-
-    // --- Zoskupenie tréningov podľa kategórie ---
-    const trainingsByCategory: Record<string, Training[]> = {};
-    for (const category of allCategories) {
-        const filtered = trainings.filter(t => t.category_name === category);
-        if (filtered.length > 0) trainingsByCategory[category] = filtered;
-    }
-
-    // --- Výpočet percentuálnej účasti ---
-    const statsByCategory = Object.entries(trainingsByCategory).map(([category, items]) => {
-        const total = items.length;
-        const present = items.filter(t => t.user_status === 'present').length;
-        const percent = total > 0 ? Math.round((present / total) * 100) : 0;
-        return { category, total, present, percent };
-    });
-
-    const categoriesCount = statsByCategory.length;
-    const sumPercents = statsByCategory.reduce((acc, s) => acc + s.percent, 0);
-    const overallCategoriesPercent = categoriesCount > 0 ? Math.round(sumPercents / categoriesCount) : 0;
-
-    // --- Farebný prechod progress baru ---
-    const getInterpolatedColor = (percent: number): string => {
-        const clamp = (n: number) => Math.max(0, Math.min(n, 100));
-        const p = clamp(percent);
-        const interpolateColor = (start: number[], end: number[], ratio: number): string => {
-            const r = Math.round(start[0] + (end[0] - start[0]) * ratio);
-            const g = Math.round(start[1] + (end[1] - start[1]) * ratio);
-            const b = Math.round(start[2] + (end[2] - start[2]) * ratio);
-            return `rgb(${r}, ${g}, ${b})`;
-        };
-
-        if (p <= 25) return interpolateColor([139, 0, 0], [255, 140, 0], p / 25);
-        if (p <= 50) return interpolateColor([255, 140, 0], [255, 215, 0], (p - 25) / 25);
-        if (p <= 75) return interpolateColor([255, 215, 0], [173, 255, 47], (p - 50) / 25);
-        return interpolateColor([173, 255, 47], [34, 139, 34], (p - 75) / 25);
+    const onRefresh = async () => {
+        setRefreshing(true);
+        await loadTrainings(true);
     };
 
-    if (loading) return <ActivityIndicator style={{ marginTop: 50 }} />;
+    const seasonOptions = useMemo(() => buildSeasonOptions(trainings), [trainings]);
+
+    const allCategories = useMemo(() => {
+        return Array.from(new Set(trainings.map((training) => training.category_name)));
+    }, [trainings]);
+
+    const trainingsByCategory = useMemo(() => {
+        const grouped: Record<string, Training[]> = {};
+
+        for (const category of allCategories) {
+            const filtered = trainings.filter((training) => training.category_name === category);
+
+            if (filtered.length > 0) {
+                grouped[category] = filtered;
+            }
+        }
+
+        return grouped;
+    }, [allCategories, trainings]);
+
+    const statsByCategory = useMemo(() => {
+        return Object.entries(trainingsByCategory).map(([category, items]) => {
+            const total = items.length;
+            const present = items.filter((training) => training.user_status === "present").length;
+            const percent = total > 0 ? Math.round((present / total) * 100) : 0;
+
+            return {
+                category,
+                total,
+                present,
+                percent,
+            };
+        });
+    }, [trainingsByCategory]);
+
+    const overallPercent = useMemo(() => {
+        if (statsByCategory.length === 0) return 0;
+
+        const sum = statsByCategory.reduce((acc, stat) => acc + stat.percent, 0);
+        return Math.round(sum / statsByCategory.length);
+    }, [statsByCategory]);
+
+    if (loading) {
+        return (
+            <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={COLORS.primary} />
+                <Text style={styles.loadingText}>Načítavam tréningy...</Text>
+            </View>
+        );
+    }
 
     return (
-        <View style={{ flex: 1, backgroundColor: '#f4f4f8' }}>
-            {/* Header s filtrami */}
+        <View style={styles.screen}>
             <View style={styles.header}>
-                <TouchableOpacity onPress={() => setSeasonPickerVisible(true)} style={styles.filterItem}>
-                    <Text style={styles.season}>{selectedSeason}</Text>
+                <TouchableOpacity
+                    onPress={() => setSeasonPickerVisible(true)}
+                    style={styles.filterItem}
+                    activeOpacity={0.85}
+                >
+                    <Text style={styles.filterLabel}>Sezóna</Text>
+                    <Text style={styles.filterValue}>{selectedSeason}</Text>
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => setMonthPickerVisible(true)} style={styles.filterItem}>
-                    <Text style={styles.season}>
-                        {selectedMonth === -1 ? 'Všetky' : monthNames[monthIndexes.indexOf(selectedMonth)]}
+
+                <TouchableOpacity
+                    onPress={() => setMonthPickerVisible(true)}
+                    style={styles.filterItem}
+                    activeOpacity={0.85}
+                >
+                    <Text style={styles.filterLabel}>Mesiac</Text>
+                    <Text style={styles.filterValue}>
+                        {selectedMonth === -1
+                            ? "Všetky"
+                            : monthNames[monthIndexes.indexOf(selectedMonth)]}
                     </Text>
                 </TouchableOpacity>
             </View>
 
-            {/* Zoznam tréningov */}
-            <ScrollView style={{ padding: 20 }}>
-                {categoriesCount > 1 && (
-                    <View style={{ marginBottom: 0 }}>
-                        <View style={styles.progressBarContainer}>
-                            <View
-                                style={[
-                                    styles.progressBarFill,
-                                    { width: `${overallCategoriesPercent}%`, backgroundColor: getInterpolatedColor(overallCategoriesPercent) },
-                                ]}
-                            />
-                            <Text style={styles.progressText}>Celkovo ({overallCategoriesPercent}%)</Text>
-                        </View>
+            <ScrollView
+                style={styles.scroll}
+                contentContainerStyle={styles.content}
+                refreshControl={
+                    <RefreshControl
+                        refreshing={refreshing}
+                        onRefresh={onRefresh}
+                        tintColor={COLORS.primary}
+                        colors={[COLORS.primary]}
+                    />
+                }
+                showsVerticalScrollIndicator={false}
+            >
+                {trainings.length === 0 ? (
+                    <View style={styles.emptyCard}>
+                        <Text style={styles.emptyTitle}>Žiadne tréningy</Text>
+                        <Text style={styles.emptyText}>
+                            Pre zvolenú sezónu alebo mesiac nemáš žiadne tréningy.
+                        </Text>
                     </View>
-                )}
+                ) : (
+                    <>
+                        {statsByCategory.length > 1 && (
+                            <View style={styles.overallBox}>
+                                <View style={styles.overallHeader}>
+                                    <Text style={styles.overallTitle}>Celkovo</Text>
+                                    <Text style={styles.overallPercent}>{overallPercent}%</Text>
+                                </View>
 
-                {Object.entries(trainingsByCategory).map(([category, items]) => {
-                    const total = items.length;
-                    const present = items.filter(t => t.user_status === 'present').length;
-                    const percent = total > 0 ? Math.round((present / total) * 100) : 0;
-
-                    return (
-                        <View key={category} style={{ marginBottom: 10 }}>
-                            <Text style={styles.categoryTitle}>{category}</Text>
-
-                            <View style={styles.progressBarContainer}>
-                                <View
-                                    style={[
-                                        styles.progressBarFill,
-                                        { width: `${percent}%`, backgroundColor: getInterpolatedColor(percent) },
-                                    ]}
-                                />
-                                <Text style={styles.progressText}>{`Účasť ${present}/${total} (${percent}%)`}</Text>
+                                <View style={styles.progressBarContainer}>
+                                    <View
+                                        style={[
+                                            styles.progressBarFill,
+                                            {
+                                                width: `${overallPercent}%`,
+                                                backgroundColor: getReadableProgressColor(overallPercent),
+                                            },
+                                        ]}
+                                    />
+                                </View>
                             </View>
+                        )}
 
-                            {items.map(t => {
-                                const dateObj = new Date(t.date);
-                                const formattedDate = dateObj.toLocaleDateString('sk-SK', {
-                                    weekday: 'long',
-                                    year: 'numeric',
-                                    month: 'long',
-                                    day: 'numeric',
-                                });
-                                const formattedTime = dateObj.toLocaleTimeString('sk-SK', {
-                                    hour: '2-digit',
-                                    minute: '2-digit',
-                                    hour12: false,
-                                });
+                        {Object.entries(trainingsByCategory).map(([category, items]) => {
+                            const total = items.length;
+                            const present = items.filter(
+                                (training) => training.user_status === "present"
+                            ).length;
+                            const percent = total > 0 ? Math.round((present / total) * 100) : 0;
 
-                                return (
-                                    <TouchableOpacity
-                                        key={t.id}
-                                        style={styles.trainingCard}
-                                        onPress={() =>
-                                            router.push({ pathname: '/training/[id]', params: { id: String(t.id) } })
-                                        }
-                                    >
-                                        <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#8C1919', marginBottom: 6 }}>
-                                            {t.description || 'Tréning'}
+                            return (
+                                <View key={category} style={styles.categoryBlock}>
+                                    <View style={styles.categoryHeader}>
+                                        <Text style={styles.categoryTitle}>{category}</Text>
+                                        <Text style={styles.categoryMeta}>
+                                            {present}/{total} • {percent}%
                                         </Text>
+                                    </View>
 
-                                        <Text style={{ color: '#555', marginBottom: 4, fontSize: 17, fontWeight: 'bold' }}>
-                                            {formattedTime} • {formattedDate}
-                                        </Text>
+                                    <View style={styles.progressBarContainer}>
+                                        <View
+                                            style={[
+                                                styles.progressBarFill,
+                                                {
+                                                    width: `${percent}%`,
+                                                    backgroundColor: getReadableProgressColor(percent),
+                                                },
+                                            ]}
+                                        />
+                                    </View>
 
-                                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 5, marginTop: 5 }}>
-                                            <Text style={{ fontSize: 16, color: '#D32F2F' }}>📍</Text>
-                                            <Text style={{ fontSize: 16, color: '#333' }}>{t.location}</Text>
-                                        </View>
+                                    {items.map((training) => {
+                                        const { date, time } = formatTrainingDate(training.date);
+                                        const statusMeta = STATUS_META[training.user_status];
 
-                                        <View style={styles.statusRow}>
-                                            <View
-                                                style={[
-                                                    styles.dot,
-                                                    {
-                                                        backgroundColor:
-                                                            t.user_status === 'present'
-                                                                ? '#4CAF50'
-                                                                : t.user_status === 'absent'
-                                                                    ? '#D32F2F'
-                                                                    : '#333',
-                                                    },
-                                                ]}
-                                            />
-                                            <Text style={styles.statusText}>
-                                                {t.user_status === 'present'
-                                                    ? 'Zúčastnil si sa'
-                                                    : t.user_status === 'absent'
-                                                        ? 'Nezúčastnil si sa'
-                                                        : 'Nezodpovedal si'}
-                                            </Text>
-                                        </View>
-                                    </TouchableOpacity>
-                                );
-                            })}
-                        </View>
-                    );
-                })}
+                                        return (
+                                            <TouchableOpacity
+                                                key={training.id}
+                                                style={styles.trainingCard}
+                                                activeOpacity={0.88}
+                                                onPress={() =>
+                                                    router.push({
+                                                        pathname: "/training/[id]",
+                                                        params: { id: String(training.id) },
+                                                    })
+                                                }
+                                            >
+                                                <Text style={styles.trainingTitle}>
+                                                    {training.description || "Tréning"}
+                                                </Text>
+
+                                                <Text style={styles.trainingDate}>
+                                                    {time} • {date}
+                                                </Text>
+
+                                                <View style={styles.locationRow}>
+                                                    <Text style={styles.locationIcon}>📍</Text>
+                                                    <Text style={styles.locationText}>
+                                                        {training.location || "Miesto nezadané"}
+                                                    </Text>
+                                                </View>
+
+                                                <View
+                                                    style={[
+                                                        styles.statusBox,
+                                                        {
+                                                            backgroundColor: statusMeta.soft,
+                                                            borderColor: statusMeta.color,
+                                                        },
+                                                    ]}
+                                                >
+                                                    <View
+                                                        style={[
+                                                            styles.dot,
+                                                            { backgroundColor: statusMeta.color },
+                                                        ]}
+                                                    />
+                                                    <Text
+                                                        style={[
+                                                            styles.statusText,
+                                                            { color: statusMeta.color },
+                                                        ]}
+                                                    >
+                                                        {statusMeta.text}
+                                                    </Text>
+                                                </View>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </View>
+                            );
+                        })}
+                    </>
+                )}
             </ScrollView>
 
-            {/* Sezóna výber */}
             <Modal visible={seasonPickerVisible} animationType="fade" transparent>
-                <Pressable style={styles.modalOverlay} onPress={() => setSeasonPickerVisible(false)}>
+                <Pressable
+                    style={styles.modalOverlay}
+                    onPress={() => setSeasonPickerVisible(false)}
+                >
                     <Pressable style={styles.pickerModal}>
-                        {allSeasons.map(season => (
-                            <TouchableOpacity
-                                key={season}
-                                onPress={() => {
-                                    setSelectedSeason(season);
-                                    setSeasonPickerVisible(false);
-                                    setLoading(true);
-                                    void fetchTrainings();
-                                }}
-                            >
-                                <Text style={[styles.drawerText, season === selectedSeason && { fontWeight: 'bold' }]}>{season}</Text>
-                            </TouchableOpacity>
-                        ))}
+                        <Text style={styles.modalTitle}>Vyber sezónu</Text>
+
+                        {seasonOptions.map((season) => {
+                            const isActive = selectedSeason === season;
+
+                            return (
+                                <TouchableOpacity
+                                    key={season}
+                                    onPress={() => {
+                                        setSelectedSeason(season);
+                                        setSeasonPickerVisible(false);
+                                    }}
+                                    style={[
+                                        styles.modalOption,
+                                        isActive && styles.modalOptionActive,
+                                    ]}
+                                >
+                                    <Text
+                                        style={[
+                                            styles.modalOptionText,
+                                            isActive && styles.modalOptionTextActive,
+                                        ]}
+                                    >
+                                        {season}
+                                    </Text>
+                                </TouchableOpacity>
+                            );
+                        })}
                     </Pressable>
                 </Pressable>
             </Modal>
 
-            {/* Mesiac výber */}
             <Modal visible={monthPickerVisible} animationType="fade" transparent>
-                <Pressable style={styles.modalOverlay} onPress={() => setMonthPickerVisible(false)}>
-                    <Pressable style={styles.SeasonPickerModal}>
-                        <ScrollView style={{ maxHeight: 800 }}>
+                <Pressable
+                    style={styles.modalOverlay}
+                    onPress={() => setMonthPickerVisible(false)}
+                >
+                    <Pressable style={styles.pickerModalSmall}>
+                        <Text style={styles.modalTitle}>Vyber mesiac</Text>
+
+                        <ScrollView showsVerticalScrollIndicator={false}>
                             <TouchableOpacity
                                 onPress={() => {
                                     setSelectedMonth(-1);
                                     setMonthPickerVisible(false);
-                                    setLoading(true);
-                                    void fetchTrainings();
                                 }}
+                                style={[
+                                    styles.modalOption,
+                                    selectedMonth === -1 && styles.modalOptionActive,
+                                ]}
                             >
-                                <Text style={[styles.drawerText, selectedMonth === -1 && { fontWeight: 'bold' }]}>Všetky</Text>
-                            </TouchableOpacity>
-                            {monthIndexes.map((index, idx) => (
-                                <TouchableOpacity
-                                    key={index}
-                                    onPress={() => {
-                                        setSelectedMonth(index);
-                                        setMonthPickerVisible(false);
-                                        setLoading(true);
-                                        void fetchTrainings();
-                                    }}
+                                <Text
+                                    style={[
+                                        styles.modalOptionText,
+                                        selectedMonth === -1 && styles.modalOptionTextActive,
+                                    ]}
                                 >
-                                    <Text style={[styles.drawerText, selectedMonth === index && { fontWeight: 'bold' }]}>{monthNames[idx]}</Text>
-                                </TouchableOpacity>
-                            ))}
+                                    Všetky
+                                </Text>
+                            </TouchableOpacity>
+
+                            {monthIndexes.map((index, idx) => {
+                                const isActive = selectedMonth === index;
+
+                                return (
+                                    <TouchableOpacity
+                                        key={index}
+                                        onPress={() => {
+                                            setSelectedMonth(index);
+                                            setMonthPickerVisible(false);
+                                        }}
+                                        style={[
+                                            styles.modalOption,
+                                            isActive && styles.modalOptionActive,
+                                        ]}
+                                    >
+                                        <Text
+                                            style={[
+                                                styles.modalOptionText,
+                                                isActive && styles.modalOptionTextActive,
+                                            ]}
+                                        >
+                                            {monthNames[idx]}
+                                        </Text>
+                                    </TouchableOpacity>
+                                );
+                            })}
                         </ScrollView>
                     </Pressable>
                 </Pressable>
@@ -297,68 +519,289 @@ export default function TrainingsScreen() {
 }
 
 const styles = StyleSheet.create({
-    categoryTitle: { fontSize: 20, fontWeight: 'bold', marginBottom: 10, color: '#D32F2F' },
-    progressBarContainer: {
-        height: 24,
-        backgroundColor: '#e0e0e0',
-        borderRadius: 12,
-        marginBottom: 16,
-        overflow: 'hidden',
-        justifyContent: 'center',
+    screen: {
+        flex: 1,
+        backgroundColor: COLORS.background,
     },
-    progressBarFill: {
-        height: '100%',
-        backgroundColor: '#4CAF50',
-        position: 'absolute',
-        left: 0,
-        top: 0,
-        bottom: 0,
+
+    scroll: {
+        flex: 1,
     },
-    progressText: { textAlign: 'center', color: '#111', fontWeight: '600' },
-    trainingCard: {
-        backgroundColor: '#fff',
-        borderRadius: 12,
+
+    content: {
         padding: 16,
-        marginBottom: 15,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.08,
-        shadowRadius: 4,
-        elevation: 3,
+        paddingBottom: 28,
     },
+
+    loadingContainer: {
+        flex: 1,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: COLORS.background,
+    },
+
+    loadingText: {
+        marginTop: 10,
+        color: COLORS.textMuted,
+        fontWeight: "600",
+        fontSize: 14,
+    },
+
     header: {
-        flexDirection: 'row',
-        justifyContent: 'space-around',
-        alignItems: 'center',
-        padding: 12,
-        backgroundColor: '#fff',
+        flexDirection: "row",
+        gap: 10,
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        backgroundColor: COLORS.card,
         borderBottomWidth: 1,
-        borderColor: '#ccc',
+        borderBottomColor: COLORS.border,
     },
-    season: { fontSize: 15, color: '#D32F2F', fontWeight: 'bold' },
-    filterItem: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, backgroundColor: '#f3f3f3' },
+
+    filterItem: {
+        flex: 1,
+        backgroundColor: COLORS.primarySoft,
+        borderRadius: 14,
+        paddingVertical: 9,
+        paddingHorizontal: 12,
+        borderWidth: 1,
+        borderColor: "#FFD1D1",
+    },
+
+    filterLabel: {
+        fontSize: 10,
+        fontWeight: "900",
+        color: COLORS.primary,
+        textTransform: "uppercase",
+        marginBottom: 2,
+    },
+
+    filterValue: {
+        fontSize: 14,
+        fontWeight: "900",
+        color: COLORS.primaryDark,
+    },
+
+    emptyCard: {
+        backgroundColor: COLORS.card,
+        borderRadius: 16,
+        padding: 22,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+        alignItems: "center",
+        marginTop: 20,
+    },
+
+    emptyTitle: {
+        fontSize: 18,
+        fontWeight: "900",
+        color: COLORS.text,
+        marginBottom: 6,
+    },
+
+    emptyText: {
+        fontSize: 14,
+        color: COLORS.textMuted,
+        textAlign: "center",
+        lineHeight: 20,
+    },
+
+    overallBox: {
+        backgroundColor: COLORS.card,
+        borderRadius: 16,
+        padding: 14,
+        marginBottom: 18,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+        shadowColor: COLORS.shadow,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 6,
+        elevation: 2,
+    },
+
+    overallHeader: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        marginBottom: 8,
+    },
+
+    overallTitle: {
+        fontSize: 15,
+        fontWeight: "900",
+        color: COLORS.text,
+    },
+
+    overallPercent: {
+        fontSize: 15,
+        fontWeight: "900",
+        color: COLORS.primary,
+    },
+
+    categoryBlock: {
+        marginBottom: 22,
+    },
+
+    categoryHeader: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "center",
+        marginBottom: 8,
+    },
+
+    categoryTitle: {
+        fontSize: 19,
+        fontWeight: "900",
+        color: COLORS.text,
+    },
+
+    categoryMeta: {
+        fontSize: 13,
+        fontWeight: "800",
+        color: COLORS.textMuted,
+    },
+
+    progressBarContainer: {
+        height: 9,
+        backgroundColor: COLORS.neutralSoft,
+        borderRadius: 999,
+        marginBottom: 12,
+        overflow: "hidden",
+    },
+
+    progressBarFill: {
+        height: "100%",
+        borderRadius: 999,
+    },
+
+    trainingCard: {
+        backgroundColor: COLORS.card,
+        borderRadius: 16,
+        padding: 15,
+        marginBottom: 13,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+        shadowColor: COLORS.shadow,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.06,
+        shadowRadius: 6,
+        elevation: 2,
+    },
+
+    trainingTitle: {
+        fontSize: 18,
+        fontWeight: "900",
+        color: COLORS.primaryDark,
+        marginBottom: 5,
+    },
+
+    trainingDate: {
+        color: COLORS.textMuted,
+        marginBottom: 6,
+        fontSize: 14,
+        fontWeight: "700",
+        textTransform: "capitalize",
+    },
+
+    locationRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        marginBottom: 10,
+        marginTop: 2,
+    },
+
+    locationIcon: {
+        fontSize: 14,
+        color: COLORS.primary,
+        marginRight: 4,
+    },
+
+    locationText: {
+        flex: 1,
+        fontSize: 15,
+        color: COLORS.textSecondary,
+        fontWeight: "600",
+    },
+
+    statusBox: {
+        alignSelf: "flex-start",
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 7,
+        borderWidth: 1,
+        borderRadius: 999,
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+    },
+
+    dot: {
+        width: 10,
+        height: 10,
+        borderRadius: 5,
+    },
+
+    statusText: {
+        fontSize: 13,
+        fontWeight: "900",
+    },
+
     modalOverlay: {
         flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: 'rgba(0,0,0,0.3)',
+        justifyContent: "center",
+        alignItems: "center",
+        backgroundColor: "rgba(0,0,0,0.35)",
+        padding: 20,
     },
+
     pickerModal: {
-        backgroundColor: '#fff',
-        padding: 20,
-        borderRadius: 10,
-        width: 300,
-        alignItems: 'center',
+        backgroundColor: COLORS.card,
+        padding: 18,
+        borderRadius: 18,
+        width: "100%",
+        maxWidth: 320,
+        alignItems: "stretch",
     },
-    SeasonPickerModal: {
-        backgroundColor: '#fff',
-        padding: 20,
-        borderRadius: 10,
-        width: 220,
-        alignItems: 'center',
+
+    pickerModalSmall: {
+        backgroundColor: COLORS.card,
+        padding: 18,
+        borderRadius: 18,
+        width: "100%",
+        maxWidth: 260,
+        maxHeight: 620,
+        alignItems: "stretch",
     },
-    drawerText: { fontSize: 22, fontWeight: 'bold', color: '#000', padding: 8, alignSelf: 'center' },
-    statusRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 5 },
-    dot: { width: 15, height: 15, borderRadius: 15 },
-    statusText: { fontSize: 14, fontWeight: 'bold', color: '#000' },
+
+    modalTitle: {
+        textAlign: "center",
+        fontSize: 17,
+        fontWeight: "900",
+        color: COLORS.text,
+        marginBottom: 12,
+    },
+
+    modalOption: {
+        paddingVertical: 11,
+        paddingHorizontal: 14,
+        borderRadius: 12,
+        backgroundColor: COLORS.neutralSoft,
+        marginBottom: 7,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+    },
+
+    modalOptionActive: {
+        backgroundColor: COLORS.primarySoft,
+        borderColor: COLORS.primary,
+    },
+
+    modalOptionText: {
+        textAlign: "center",
+        fontSize: 15,
+        fontWeight: "800",
+        color: COLORS.text,
+    },
+
+    modalOptionTextActive: {
+        color: COLORS.primary,
+    },
 });

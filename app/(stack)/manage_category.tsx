@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useContext } from 'react';
+import React, { useCallback, useEffect, useState, useContext } from 'react';
 import {
     View, Text, TouchableOpacity, ScrollView,
     StyleSheet, Alert, ActivityIndicator
@@ -6,7 +6,6 @@ import {
 import { useFetchWithAuth } from '@/hooks/fetchWithAuth';
 import { AuthContext } from '@/context/AuthContext';
 import { BASE_URL } from '@/hooks/api';
-import { useRouter } from 'expo-router';
 
 type Player = {
     id: number;
@@ -23,7 +22,6 @@ type Category = {
 export default function ManageCategoryScreen() {
     const { fetchWithAuth } = useFetchWithAuth();
     const { userRoles } = useContext(AuthContext);
-    const router = useRouter();
 
     const coachCategories = userRoles
         .filter(r => r.role === 'coach')
@@ -34,13 +32,14 @@ export default function ManageCategoryScreen() {
     const [loading, setLoading] = useState(true);
     const [selectedInCategory, setSelectedInCategory] = useState<number[]>([]);
 
-    const fetchPlayers = async () => {
+    const fetchPlayers = useCallback(async () => {
         try {
             setLoading(true);
             const res = await fetchWithAuth(`${BASE_URL}/users-in-club/`);
             const data = await res.json();
 
-            const onlyPlayers: Player[] = data
+            const users = Array.isArray(data) ? data : [];
+            const onlyPlayers: Player[] = users
                 .filter((u: any) => u.roles.some((r: any) => r.role === 'player'))
                 .map((u: any) => ({
                     id: u.id,
@@ -52,12 +51,12 @@ export default function ManageCategoryScreen() {
                 }));
 
             setPlayers(onlyPlayers);
-        } catch (e) {
+        } catch {
             Alert.alert("Chyba", "Nepodarilo sa načítať hráčov.");
         } finally {
             setLoading(false);
         }
-    };
+    }, [fetchWithAuth]);
 
     const handleSelectCategory = (cat: Category) => {
         setSelectedCategory(cat);
@@ -87,14 +86,14 @@ export default function ManageCategoryScreen() {
 
             if (!res.ok) throw new Error();
             Alert.alert("✅ Uložené", "Hráči boli priradení.");
-        } catch (e) {
+        } catch {
             Alert.alert("❌ Chyba", "Nepodarilo sa uložiť zmeny.");
         }
     };
 
     useEffect(() => {
-        fetchPlayers();
-    }, []);
+        void fetchPlayers();
+    }, [fetchPlayers]);
 
     const sortedPlayers = [...players].sort(
         (a, b) => new Date(a.birth_date).getTime() - new Date(b.birth_date).getTime()

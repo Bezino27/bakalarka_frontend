@@ -1,5 +1,5 @@
 // app/admin/AnnouncementsAdminScreen.tsx
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -9,7 +9,6 @@ import {
   ActivityIndicator,
   TextInput,
   Alert,
-  ScrollView,
 } from "react-native";
 import { useFetchWithAuth } from "@/hooks/fetchWithAuth";
 import { BASE_URL } from "@/hooks/api";
@@ -55,19 +54,19 @@ export default function AnnouncementsAdminScreen() {
   const [readers, setReaders] = useState<Reader[]>([]);
   const [loadingReaders, setLoadingReaders] = useState(false);
 
-  const fetchAnnouncements = async () => {
+  const fetchAnnouncements = useCallback(async () => {
     try {
       const res = await fetchWithAuth(`${BASE_URL}/announcements-admin/`);
       if (!res.ok) throw new Error("Nepodarilo sa načítať oznamy");
       const data = await res.json();
-      setAnnouncements(data);
+      setAnnouncements(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error("❌ Chyba pri načítaní oznamov:", err);
       Alert.alert("Chyba", "Nepodarilo sa načítať oznamy");
     } finally {
       setLoading(false);
     }
-  };
+  }, [fetchWithAuth]);
   // doplníme funkciu
   const deleteAnnouncement = async (id: number) => {
     Alert.alert(
@@ -87,7 +86,7 @@ export default function AnnouncementsAdminScreen() {
               Alert.alert("✅ Hotovo", "Oznam bol zmazaný.");
               setSelected(null);
               setShowReaders(false);
-              fetchAnnouncements();
+              void fetchAnnouncements();
             } catch (err) {
               console.error("❌ Chyba pri mazaní oznamu:", err);
               Alert.alert("Chyba", "Nepodarilo sa zmazať oznam.");
@@ -153,7 +152,7 @@ export default function AnnouncementsAdminScreen() {
         setTitle("");
         setContent("");
         setCreating(false);
-        fetchAnnouncements();
+        void fetchAnnouncements();
       } else {
         const errorText = await res.text();
         console.error("❌ Chyba pri vytváraní oznamu:", errorText);
@@ -168,8 +167,8 @@ export default function AnnouncementsAdminScreen() {
   };
 
   useEffect(() => {
-    fetchAnnouncements();
-  }, []);
+    void fetchAnnouncements();
+  }, [fetchAnnouncements]);
 
   const renderItem = ({ item }: { item: Announcement }) => (
     <TouchableOpacity style={styles.card} onPress={() => setSelected(item)}>

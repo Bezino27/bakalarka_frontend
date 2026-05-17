@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { AuthContext } from '@/context/AuthContext';
 import { BASE_URL } from '@/hooks/api';
 import { useFetchWithAuth } from '@/hooks/fetchWithAuth';
-import type { ProductType, OrderItemPayload, OrderPayload } from '@/app/(stack)/menu/types/orders';
+import type { ProductType, OrderItemPayload, OrderPayload } from '@/types/orders';
 
 const TYPE_LABEL: Record<ProductType, string> = {
     stick: 'Hokejka',
@@ -129,7 +129,7 @@ export default function CreateOrderScreen() {
     const { userClub } = useContext(AuthContext);
     const { fetchWithAuth } = useFetchWithAuth();
 
-    const [activeType, setActiveType] = useState<ProductType>('stick');
+    const activeType: ProductType = 'stick';
     const [items, setItems] = useState<OrderItemPayload[]>([
         { product_type: 'stick', product_name: '', product_code: '', side: '', height: '', size: '', quantity: 1, note: '' },
     ]);

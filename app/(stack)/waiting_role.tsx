@@ -1,4 +1,4 @@
-import { useContext, useState, useEffect, useRef } from 'react';
+import { useCallback, useContext, useState, useEffect, useRef } from 'react';
 import {
     View,
     StyleSheet,
@@ -21,7 +21,7 @@ export default function WaitingRoleScreen() {
     const [loading, setLoading] = useState(false);
     const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-    const refreshUser = async (showAlert = true) => {
+    const refreshUser = useCallback(async (showAlert = true) => {
         setLoading(true);
         try {
             const res = await fetchWithAuth(`${BASE_URL}/me/`);
@@ -65,7 +65,7 @@ export default function WaitingRoleScreen() {
         } finally {
             setLoading(false);
         }
-    };
+    }, [fetchWithAuth, router, setUserCategories, setUserClub, setUserDetails, setUserRoles]);
 
     useEffect(() => {
         intervalRef.current = setInterval(() => {
@@ -75,7 +75,7 @@ export default function WaitingRoleScreen() {
         return () => {
             if (intervalRef.current) clearInterval(intervalRef.current);
         };
-    }, []);
+    }, [refreshUser]);
 
     return (
         <View style={styles.container}>

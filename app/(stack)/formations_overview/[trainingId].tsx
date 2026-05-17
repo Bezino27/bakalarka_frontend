@@ -81,7 +81,7 @@ export default function FormationOverviewScreen() {
       }
     };
     load();
-  }, [trainingId, categoryId]);
+  }, [trainingId, categoryId, fetchWithAuth]);
 
   if (loading) return <ActivityIndicator style={{ marginTop: 40 }} />;
 

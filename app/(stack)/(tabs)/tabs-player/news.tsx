@@ -1,11 +1,12 @@
-import React, { useEffect, useState, useContext } from 'react';
+import React, { useCallback, useEffect, useState, useContext } from 'react';
 import { View, Text, ScrollView, ActivityIndicator, TouchableOpacity, Alert, StyleSheet, ImageBackground, Image, RefreshControl, Modal, TextInput,KeyboardAvoidingView,
   TouchableWithoutFeedback,
   Keyboard,
-  Platform, useColorScheme} from 'react-native';
+  Platform } from 'react-native';
 import { AuthContext } from '@/context/AuthContext';
 import { BASE_URL } from '@/hooks/api';
 import { useFetchWithAuth } from '@/hooks/fetchWithAuth';
+import { readJsonArrayOrThrow } from '@/hooks/readResponse';
 import { useRouter } from 'expo-router';
 import ProfileCompletionBanner from "@/components/ProfileCompletionBanner";
 
@@ -45,17 +46,6 @@ type Match = {
 
 export default function TreningyScreen() {
   const [refreshing, setRefreshing] = useState(false);
-  const colorScheme = useColorScheme();
-  const isDarkMode = colorScheme === 'dark';
-
-  const themeColors = {
-    background: isDarkMode ? '#121212' : '#f4f4f8',
-    card: isDarkMode ? '#1E1E1E' : '#fff',
-    text: isDarkMode ? '#fff' : '#000',
-    secondaryText: isDarkMode ? '#aaa' : '#333',
-    accent: '#D32F2F',
-    border: isDarkMode ? '#333' : '#ccc',
-  };
 
   const {
     isLoggedIn,
@@ -74,29 +64,29 @@ export default function TreningyScreen() {
   const [selectedTrainingId, setSelectedTrainingId] = useState<number | null>(null);
   const [selectedReason, setSelectedReason] = useState<string | null>(null);
   const [customReason, setCustomReason] = useState('');
-  const fetchTrainings = async () => {
+  const fetchTrainings = useCallback(async () => {
     try {
       const res = await fetchWithAuth(`${BASE_URL}/player-trainings/`);
-      const data = await res.json();
+      const data = await readJsonArrayOrThrow<Training>(res, 'Nepodarilo sa načítať tréningy.');
       setTrainings(data);
     } catch (error) {
       console.error('fetchTrainings error:', error);
     } finally {
       setLoading(false);
     }
-  };
+  }, [fetchWithAuth]);
 
 
   // nový fetch zápasov
-  const fetchMatches = async () => {
+  const fetchMatches = useCallback(async () => {
     try {
       const res = await fetchWithAuth(`${BASE_URL}/player-nominated-matches/`);
-      const data = await res.json();
+      const data = await readJsonArrayOrThrow<Match>(res, 'Nepodarilo sa načítať zápasy.');
       setMatches(data);
     } catch (error) {
       console.error('fetchMatches error:', error);
     }
-  };
+  }, [fetchWithAuth]);
 
 
   const onRefresh = async () => {
@@ -124,7 +114,7 @@ export default function TreningyScreen() {
     if (!isLoggedIn || !accessToken) return;
     void fetchTrainings();
     void fetchMatches();
-  }, [isLoggedIn, accessToken]);
+  }, [isLoggedIn, accessToken, fetchMatches, fetchTrainings]);
 
 // pomocná funkcia na zmenu účasti
   async function handleMatchConfirmation(matchId: number, confirmed: boolean) {
@@ -146,7 +136,7 @@ export default function TreningyScreen() {
               m.id === matchId ? { ...m, confirmed } : m
           )
       );
-    } catch (error) {
+    } catch {
       Alert.alert('Chyba', 'Nepodarilo sa uložiť tvoju účasť.');
     }
   }
@@ -665,4 +655,3 @@ input: {
 },
 
 });
-

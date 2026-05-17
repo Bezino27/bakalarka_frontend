@@ -4,7 +4,7 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { router } from 'expo-router';
 import { AuthContext } from '@/context/AuthContext';
 
-const REQUIRED: Array<'email' | 'birth_date' | 'height' | 'weight' | 'side' | 'number' |'position'> =
+const REQUIRED: ('email' | 'birth_date' | 'height' | 'weight' | 'side' | 'number' |'position')[] =
     ['email','birth_date','height','weight','side','number','position'];
 
 export default function ProfileCompletionBanner() {

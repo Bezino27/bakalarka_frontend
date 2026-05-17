@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useContext } from 'react';
+import React, { useCallback, useEffect, useState, useContext } from 'react';
 import {
   View,
   Text,
@@ -82,7 +82,7 @@ export default function PlayerDetailScreen() {
     const router = useRouter();
 
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     if (!isLoggedIn || !id) return;
     setLoading(true);
     try {
@@ -98,11 +98,11 @@ export default function PlayerDetailScreen() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [fetchWithAuth, id, isLoggedIn, selectedMonth, selectedSeason]);
 
   useEffect(() => {
     void loadData();
-  }, [id, isLoggedIn, selectedSeason, selectedMonth]);
+  }, [loadData]);
 
   if (loading) return <ActivityIndicator style={{ marginTop: 50 }} />;
   if (!data) return <Text style={{ padding: 20 }}>Hráč neexistuje alebo nemáš oprávnenie.</Text>;

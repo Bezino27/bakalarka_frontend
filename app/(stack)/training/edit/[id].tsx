@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -11,11 +11,12 @@ import {
 } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { BASE_URL } from "@/hooks/api";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useFetchWithAuth } from "@/hooks/fetchWithAuth";
 
 export default function EditTrainingScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const { fetchWithAuth } = useFetchWithAuth();
 
   const [description, setDescription] = useState("");
   const [location, setLocation] = useState("");
@@ -26,36 +27,31 @@ export default function EditTrainingScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
 
-  useEffect(() => {
-    const loadTraining = async () => {
+  const loadTraining = useCallback(async () => {
+    if (!id) return;
+
       try {
-        const token = await AsyncStorage.getItem("access");
-        const res = await fetch(`${BASE_URL}/training-detail/${id}/`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const res = await fetchWithAuth(`${BASE_URL}/training-detail/${id}/`);
+        if (!res.ok) throw new Error("Nepodarilo sa načítať tréning.");
         const data = await res.json();
         setDescription(data.description || "");
         setLocation(data.location || "");
         setDate(new Date(data.date));
-      } catch (err) {
+      } catch {
         Alert.alert("Chyba", "Nepodarilo sa načítať tréning.");
       } finally {
         setLoading(false);
       }
-    };
+  }, [fetchWithAuth, id]);
 
-    if (id) loadTraining();
-  }, [id]);
+  useEffect(() => {
+    void loadTraining();
+  }, [loadTraining]);
 
   const handleSave = async () => {
     try {
-      const token = await AsyncStorage.getItem("access");
-      const res = await fetch(`${BASE_URL}/trainings/${id}/`, {
+      const res = await fetchWithAuth(`${BASE_URL}/trainings/${id}/`, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
         body: JSON.stringify({
           description,
           location,

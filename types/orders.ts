@@ -9,9 +9,8 @@ export type OrderItemPayload = {
     size?: string;
     quantity: number;
     note?: string;
-    unit_price?: number | string; // ← môže prísť "19.90" zo servera
+    unit_price?: number | string;
     is_canceled?: boolean;
-
 };
 
 export type OrderPayload = {
@@ -27,7 +26,7 @@ export type OrderDto = {
     status: 'new' | 'processing' | 'done' | 'canceled';
     note: string;
     created_at: string;
-    is_paid: boolean;         // ← pridané
-    total_amount: number | string; // ← tiež môže byť string z DecimalField
+    is_paid: boolean;
+    total_amount: number | string;
     items: (OrderItemPayload & { id: number })[];
 };

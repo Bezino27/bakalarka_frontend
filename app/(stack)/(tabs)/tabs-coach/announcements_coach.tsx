@@ -1,5 +1,5 @@
 // app/admin/AnnouncementsAdminScreen.tsx
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -9,7 +9,6 @@ import {
   ActivityIndicator,
   TextInput,
   Alert,
-  ScrollView,
 } from "react-native";
 import { useFetchWithAuth } from "@/hooks/fetchWithAuth";
 import { BASE_URL } from "@/hooks/api";
@@ -49,20 +48,37 @@ export default function AnnouncementsAdminScreen() {
   // čitatelia
   const [readers, setReaders] = useState<Reader[]>([]);
   const [loadingReaders, setLoadingReaders] = useState(false);
+  const isFetchingAnnouncementsRef = useRef(false);
+  const lastAnnouncementsFetchRef = useRef(0);
+  const markingReadIdsRef = useRef<Set<number>>(new Set());
 
-  const fetchAnnouncements = async () => {
+  const fetchAnnouncements = useCallback(async (force = false) => {
+    const now = Date.now();
+
+    if (isFetchingAnnouncementsRef.current) return;
+
+    if (!force && now - lastAnnouncementsFetchRef.current < 15000) {
+      return;
+    }
+
+    isFetchingAnnouncementsRef.current = true;
+    lastAnnouncementsFetchRef.current = now;
+
     try {
       const res = await fetchWithAuth(`${BASE_URL}/announcements/`); // 🔑 filtruje podľa trénera
-      if (!res.ok) throw new Error("Nepodarilo sa načítať oznamy");
+      if (!res.ok) {
+        console.log("Coach announcements fetch failed:", res.status);
+        return;
+      }
       const data = await res.json();
-      setAnnouncements(data);
+      setAnnouncements(Array.isArray(data) ? data : []);
     } catch (err) {
-      console.error("❌ Chyba pri načítaní oznamov:", err);
-      Alert.alert("Chyba", "Nepodarilo sa načítať oznamy");
+      console.log("Coach announcements fetch error:", err);
     } finally {
+      isFetchingAnnouncementsRef.current = false;
       setLoading(false);
     }
-  };
+  }, [fetchWithAuth]);
 
   const fetchCategories = async () => {
     try {
@@ -93,7 +109,7 @@ const deleteAnnouncement = async (id: number) => {
             Alert.alert("✅ Hotovo", "Oznam bol zmazaný.");
             setSelected(null);
             setShowReaders(false);
-            fetchAnnouncements();
+            void fetchAnnouncements(true);
           } catch (err) {
             console.error("❌ Chyba pri mazaní oznamu:", err);
             Alert.alert("Chyba", "Nepodarilo sa zmazať oznam.");
@@ -105,17 +121,32 @@ const deleteAnnouncement = async (id: number) => {
 };
 
   const markAsRead = async (id: number) => {
+    if (markingReadIdsRef.current.has(id)) return;
+
+    const target = announcements.find((announcement) => announcement.id === id);
+    if (target?.read_at) return;
+
+    markingReadIdsRef.current.add(id);
+
     try {
-      await fetchWithAuth(`${BASE_URL}/announcements/${id}/read/`, {
+      const response = await fetchWithAuth(`${BASE_URL}/announcements/${id}/read/`, {
         method: "POST",
       });
+
+      if (!response.ok) {
+        console.log("Coach announcement mark as read failed:", response.status);
+        return;
+      }
+
       setAnnouncements((prev) =>
         prev.map((a) =>
           a.id === id ? { ...a, read_at: new Date().toISOString() } : a
         )
       );
     } catch (err) {
-      console.error("❌ Nepodarilo sa označiť oznam ako prečítaný:", err);
+      console.log("Coach announcement mark as read error:", err);
+    } finally {
+      markingReadIdsRef.current.delete(id);
     }
   };
 
@@ -166,7 +197,7 @@ const deleteAnnouncement = async (id: number) => {
         setTitle("");
         setContent("");
         setCreating(false);
-        fetchAnnouncements();
+        void fetchAnnouncements(true);
       } else {
         const errorText = await res.text();
         console.error("❌ Chyba pri vytváraní oznamu:", errorText);
@@ -181,8 +212,8 @@ const deleteAnnouncement = async (id: number) => {
   };
 
   useEffect(() => {
-    fetchAnnouncements();
-  }, []);
+    void fetchAnnouncements();
+  }, [fetchAnnouncements]);
 
   const renderItem = ({ item }: { item: Announcement }) => (
     <TouchableOpacity
@@ -371,7 +402,7 @@ if (selected) {
         keyExtractor={(item) => String(item.id)}
         contentContainerStyle={{ padding: 16 }}
         refreshing={loading}
-        onRefresh={fetchAnnouncements}
+        onRefresh={() => void fetchAnnouncements(true)}
       />
       <TouchableOpacity
         onPress={() => {

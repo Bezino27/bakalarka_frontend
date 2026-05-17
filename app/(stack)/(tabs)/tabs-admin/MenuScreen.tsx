@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { AuthContext } from '@/context/AuthContext';
+import { LinkedAccountsSection } from '@/components/LinkedAccountsSection';
 
 const menuItems = [
     { label: 'Správa kategórii', image: require('@/assets/images/menu/sprava_kat.png'), route: '/menu/users' },
@@ -89,6 +90,7 @@ export default function MenuScreen() {
                     </View>
                 </View>
             )}
+            <LinkedAccountsSection />
         </ScrollView>
     );
 }

@@ -62,7 +62,7 @@ export default function AttendanceScreen() {
   ];
 
   // 🔹 Načítanie dát s filtrami
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     if (!isLoggedIn || !accessToken) return;
     setLoading(true);
     try {
@@ -75,13 +75,14 @@ export default function AttendanceScreen() {
 
       const res = await fetchWithAuth(url);
       if (!res.ok) throw new Error("Nepodarilo sa načítať dochádzku.");
-      const json: PlayerSummary[] = await res.json();
-      setData(json);
+      const json = await res.json();
+      const summaries: PlayerSummary[] = Array.isArray(json) ? json : [];
+      setData(summaries);
 
       // 🔸 automaticky zisti sezóny
       const years = Array.from(
         new Set(
-          json
+          summaries
             .flatMap((p) =>
               p.categories
                 .map((c) =>
@@ -101,16 +102,16 @@ export default function AttendanceScreen() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [accessToken, fetchWithAuth, isLoggedIn, selectedCategory, selectedMonth, selectedSeason]);
 
   useEffect(() => {
-    fetchData();
-  }, [isLoggedIn, accessToken]);
+    void fetchData();
+  }, [fetchData]);
 
   useFocusEffect(
     useCallback(() => {
-      fetchData();
-    }, [selectedCategory, selectedMonth, selectedSeason])
+      void fetchData();
+    }, [fetchData])
   );
 
   const allCategories = Array.from(

@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useEffect, useState, useContext } from "react";
+import React, { useCallback, useEffect, useState, useContext } from "react";
 import {
     View, Text, ScrollView, StyleSheet, TouchableOpacity, Alert,
 } from "react-native";
@@ -22,12 +22,7 @@ export default function MatchNominationScreen() {
     const {userRoles} = useContext(AuthContext);
     const [players, setPlayers] = useState<Player[]>([]);
 
-    useEffect(() => {
-        if (!id) return;
-        loadData();
-    }, [id]);
-
-    const loadData = async () => {
+    const loadData = useCallback(async () => {
         try {
             const [nominationsRes, detailRes] = await Promise.all([
                 fetchWithAuth(`${BASE_URL}/match-nominations/${id}/`),
@@ -38,9 +33,9 @@ export default function MatchNominationScreen() {
             const detailData = await detailRes.json();
             const votedYes = new Set<number>(detailData.players_present?.map((p: any) => p.user_id) || []);
             const votedNo = new Set<number>(detailData.players_absent?.map((p: any) => p.user_id) || []);
-            const votedUnknown = new Set<number>(detailData.players_unknown?.map((p: any) => p.user_id) || []);
 
-            const allPlayers: Player[] = nominationsData.nominations.map((p: any) => ({
+            const nominations = Array.isArray(nominationsData.nominations) ? nominationsData.nominations : [];
+            const allPlayers: Player[] = nominations.map((p: any) => ({
                 user_id: p.user_id,
                 name: p.name,
                 birth_date: p.birth_date,
@@ -55,10 +50,15 @@ export default function MatchNominationScreen() {
             }));
 
             setPlayers(allPlayers);
-        } catch (e) {
+        } catch {
             Alert.alert("Chyba", "Nepodarilo sa načítať dáta.");
         }
-    };
+    }, [fetchWithAuth, id]);
+
+    useEffect(() => {
+        if (!id) return;
+        void loadData();
+    }, [id, loadData]);
 
     const updateStatus = (id: number, newStatus: Player["status"]) => {
         setPlayers((prev) =>
@@ -101,7 +101,7 @@ export default function MatchNominationScreen() {
                 router.replace('/tabs-player/matches');
             }
 
-        } catch (err) {
+        } catch {
             Alert.alert("Chyba", "Nepodarilo sa uložiť nomináciu");
         }
     };

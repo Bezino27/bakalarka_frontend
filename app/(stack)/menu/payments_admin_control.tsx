@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
     View,
     Text,
@@ -30,18 +30,18 @@ export default function PaymentsAdminScreen() {
     const [payments, setPayments] = useState<Payment[]>([]);
     const [loading, setLoading] = useState(true);
 
-    const fetchPayments = async () => {
+    const fetchPayments = useCallback(async () => {
         try {
             const res = await fetchWithAuth(`${BASE_URL}/admin-member-payments/`);
             const data = await res.json();
-            setPayments(data);
+            setPayments(Array.isArray(data) ? data : []);
         } catch (e) {
             console.error("❌ Chyba pri načítaní platieb", e);
             Alert.alert("Chyba", "Nepodarilo sa načítať platby.");
         } finally {
             setLoading(false);
         }
-    };
+    }, [fetchWithAuth]);
 
     const togglePaymentStatus = async (paymentId: number, currentStatus: boolean) => {
         try {
@@ -64,8 +64,8 @@ export default function PaymentsAdminScreen() {
     };
 
     useEffect(() => {
-        fetchPayments();
-    }, []);
+        void fetchPayments();
+    }, [fetchPayments]);
 
     if (loading) return <ActivityIndicator style={{ marginTop: 50 }} />;
 

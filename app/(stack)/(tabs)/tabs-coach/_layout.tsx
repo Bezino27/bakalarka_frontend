@@ -1,12 +1,13 @@
 import { Tabs, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { TouchableOpacity, Image, View, StyleSheet, Text } from 'react-native';
+import { TouchableOpacity, Image, View, StyleSheet, Text, DeviceEventEmitter } from 'react-native';
 import { useFetchWithAuth } from "@/hooks/fetchWithAuth";
 import React, { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
-import { BASE_URL } from "@/hooks/api";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AuthContext } from "@/context/AuthContext";
+import { getConversations } from "@/hooks/chatApi";
+import * as Notifications from "expo-notifications";
 
 export default function AdminTabsLayout() {
     const router = useRouter();
@@ -24,15 +25,13 @@ export default function AdminTabsLayout() {
         if (inflightRef.current) return;              // 🔒 neštartuj paralelne
         inflightRef.current = true;
         try {
-            // TIP: ak budeš mať ľahší endpoint (napr. /chat-unread-count/), použi ten
-            const res = await fetchWithAuth(`${BASE_URL}/chat-users/`);
-            if (!res.ok) return;
-            const data = await res.json();
+            const data = await getConversations(fetchWithAuth);
             if (abortedRef.current) return;
             const count = Array.isArray(data)
-                ? data.filter((u: any) => u?.has_unread).length
+                ? data.reduce((sum, conversation) => sum + Math.max(0, conversation.unread_count || 0), 0)
                 : 0;
             setUnreadCount(count);
+            await Notifications.setBadgeCountAsync(count);
         } catch (e) {
             if (!abortedRef.current) console.error("❌ Chyba pri načítaní neprečítaných správ:", e);
         } finally {
@@ -58,12 +57,18 @@ export default function AdminTabsLayout() {
         return () => clearInterval(id);
     }, [isLoggedIn, accessToken, fetchUnread]);
 
+    useEffect(() => {
+        const sub = DeviceEventEmitter.addListener("refreshChatUnread", () => {
+            void fetchUnread();
+        });
+        return () => sub.remove();
+    }, [fetchUnread]);
+
     return (
         <Tabs
             screenOptions={{
                 headerStyle: {
                     height: 40 + insets.top,
-                    paddingTop: insets.top,
                     backgroundColor: "#fff",
                 },
                 tabBarActiveTintColor: '#D32F2F',     // 🔥 farba aktívnej ikony (napr. červená)
@@ -184,24 +189,6 @@ export default function AdminTabsLayout() {
                     tabBarIcon: ({ color, size }) => (
                         <Image
                             source={require('@/assets/images/zapasy_full.png')}
-                            style={{ width: size, height: size, tintColor: color }}
-                        />
-                    ),
-                }}
-            />
-            <Tabs.Screen
-                name="attendance"
-                options={{
-                    title: "Dochádzka",
-                    headerTitle: () => (
-                        <Image
-                            source={require('@/assets/images/trainings.png')}
-                            style={{ width: 180, height: 30, resizeMode: 'contain' }}
-                        />
-                    ),
-                    tabBarIcon: ({ color, size }) => (
-                        <Image
-                            source={require('@/assets/images/coachtg.png')}
                             style={{ width: size, height: size, tintColor: color }}
                         />
                     ),

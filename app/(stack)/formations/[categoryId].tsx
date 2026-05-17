@@ -1,5 +1,5 @@
 import { useLocalSearchParams } from "expo-router";
-import React, { useEffect, useState, useContext } from "react";
+import React, { useCallback, useEffect, useState, useContext } from "react";
 import {
   View,
   Text,
@@ -60,33 +60,33 @@ export default function FormationEditorScreen() {
   const isCoach = currentRole?.role === "coach";
 
   // 🧠 načítanie formácií
-  const loadFormations = async () => {
+  const loadFormations = useCallback(async () => {
     try {
       const res = await fetchWithAuth(`${BASE_URL}/formations/${categoryId}/`);
       const data = await res.json();
-      setFormations(data);
+      setFormations(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error("❌ Chyba pri načítaní formácií:", err);
     } finally {
       setLoading(false);
     }
-  };
+  }, [categoryId, fetchWithAuth]);
 
   // 🧠 načítanie hráčov
-  const loadPlayers = async () => {
+  const loadPlayers = useCallback(async () => {
     try {
       const res = await fetchWithAuth(`${BASE_URL}/players-in-category/${categoryId}/`);
       const data = await res.json();
-      setPlayers(data);
+      setPlayers(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error("❌ Chyba pri načítaní hráčov:", err);
     }
-  };
+  }, [categoryId, fetchWithAuth]);
 
   useEffect(() => {
-    loadFormations();
-    loadPlayers();
-  }, [categoryId]);
+    void loadFormations();
+    void loadPlayers();
+  }, [loadFormations, loadPlayers]);
 
   // ✅ vytvorenie formácie
   const createFormation = async () => {
@@ -99,7 +99,7 @@ export default function FormationEditorScreen() {
       });
       if (!res.ok) throw new Error("Chyba pri vytváraní formácie");
       setNewFormationName("");
-      loadFormations();
+      void loadFormations();
       Alert.alert("✅ Formácia vytvorená");
     } catch {
       Alert.alert("Chyba", "Nepodarilo sa vytvoriť formáciu");
@@ -117,7 +117,7 @@ export default function FormationEditorScreen() {
           try {
             const res = await fetchWithAuth(`${BASE_URL}/formation/${id}/`, { method: "DELETE" });
             if (!res.ok) throw new Error();
-            loadFormations();
+            void loadFormations();
           } catch {
             Alert.alert("Chyba", "Nepodarilo sa zmazať formáciu");
           }

@@ -1,6 +1,6 @@
 // app/(stack)/upload.tsx
-import React, { useContext, useMemo } from 'react';
-import { View, StyleSheet, Text, TouchableOpacity } from 'react-native';
+import React, { useContext, useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, View, StyleSheet, Text, TouchableOpacity } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { AuthContext } from '@/context/AuthContext';
 import { BASE_URL } from '@/hooks/api';
@@ -8,12 +8,32 @@ import { useRouter } from 'expo-router';
 
 export default function UploadDocumentScreen() {
     const router = useRouter();
-    const { accessToken, currentRole } = useContext(AuthContext);
+    const { accessToken, currentRole, refreshAccessToken } = useContext(AuthContext);
+    const [webViewToken, setWebViewToken] = useState(accessToken || '');
 
     const isAdmin = useMemo(
         () => currentRole?.role?.toLowerCase() === 'admin',
         [currentRole]
     );
+
+    useEffect(() => {
+        let mounted = true;
+
+        const loadFreshToken = async () => {
+            const token = await refreshAccessToken();
+            if (mounted) {
+                setWebViewToken(token || accessToken || '');
+            }
+        };
+
+        if (isAdmin) {
+            void loadFreshToken();
+        }
+
+        return () => {
+            mounted = false;
+        };
+    }, [accessToken, isAdmin, refreshAccessToken]);
 
     // UI pre ne‑adminov (nič neumožníme)
     if (!isAdmin) {
@@ -26,6 +46,14 @@ export default function UploadDocumentScreen() {
                                   style={{ paddingVertical: 10, paddingHorizontal: 16, backgroundColor: '#D32F2F', borderRadius: 8 }}>
                     <Text style={{ color: '#fff', fontWeight: '600' }}>Späť</Text>
                 </TouchableOpacity>
+            </View>
+        );
+    }
+
+    if (!webViewToken) {
+        return (
+            <View style={[styles.container, styles.centered]}>
+                <ActivityIndicator size="large" color="#D32F2F" />
             </View>
         );
     }
@@ -61,7 +89,7 @@ export default function UploadDocumentScreen() {
 
         <script>
           (function(){
-            const ACCESS_TOKEN = ${JSON.stringify(accessToken || '')};
+            const ACCESS_TOKEN = ${JSON.stringify(webViewToken)};
             const BASE_URL = ${JSON.stringify(BASE_URL)};
             const form = document.getElementById('uploadForm');
             const msg = document.getElementById('msg');
@@ -112,5 +140,6 @@ export default function UploadDocumentScreen() {
 
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#fff' },
+    centered: { justifyContent: 'center', alignItems: 'center' },
     webview: { flex: 1 },
 });

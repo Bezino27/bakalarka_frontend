@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
     View, Text, TextInput, ScrollView, StyleSheet,
     TouchableOpacity, Alert
@@ -22,24 +22,24 @@ export default function MatchStatsScreen() {
     const { fetchWithAuth } = useFetchWithAuth();
     const router = useRouter();
     const [players, setPlayers] = useState<Player[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [, setLoading] = useState(true);
 
-    useEffect(() => {
-        if (!id) return;
-        loadPlayers();
-    }, [id]);
-
-    const loadPlayers = async () => {
+    const loadPlayers = useCallback(async () => {
         try {
             const res = await fetchWithAuth(`${BASE_URL}/match-nominations/${id}/`);
             const data = await res.json();
-            setPlayers(data.nominations);
-        } catch (e) {
+            setPlayers(Array.isArray(data.nominations) ? data.nominations : []);
+        } catch {
             Alert.alert("Chyba", "Nepodarilo sa načítať hráčov.");
         } finally {
             setLoading(false);
         }
-    };
+    }, [fetchWithAuth, id]);
+
+    useEffect(() => {
+        if (!id) return;
+        void loadPlayers();
+    }, [id, loadPlayers]);
 
     const updatePlayer = (user_id: number, key: keyof Player, value: any) => {
         setPlayers(prev =>
@@ -65,7 +65,7 @@ export default function MatchStatsScreen() {
             if (!res.ok) throw new Error();
             Alert.alert("✅ Uložené", "Štatistiky boli uložené");
             router.back();
-        } catch (err) {
+        } catch {
             Alert.alert("Chyba", "Nepodarilo sa uložiť štatistiky.");
         }
     };

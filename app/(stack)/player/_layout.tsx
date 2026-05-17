@@ -1,6 +1,5 @@
-import { Stack } from "expo-router";
-import { Image, TouchableOpacity, View, Text } from "react-native";
-import { useRouter } from "expo-router";
+import { Stack, useRouter } from "expo-router";
+import { Image, TouchableOpacity } from "react-native";
 
 export default function TrainingLayout() {
     const router = useRouter();

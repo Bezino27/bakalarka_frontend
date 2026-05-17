@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { AuthContext } from '@/context/AuthContext';
+import { LinkedAccountsSection } from '@/components/LinkedAccountsSection';
 const menuItems = [
     { label: 'Dresy', image: require('@/assets/images/menu/dresy.png'), route: '/menu/jerseys' },
     { label: 'Údaje hráča', image: require('@/assets/images/menu/udaje.png'), route: '/profile' },
@@ -85,6 +86,8 @@ export default function MenuScreen() {
                     </View>
                 </View>
             )}
+
+            <LinkedAccountsSection />
 
         </ScrollView>
     );

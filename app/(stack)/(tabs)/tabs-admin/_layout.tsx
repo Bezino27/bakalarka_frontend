@@ -1,34 +1,62 @@
 import { Tabs, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { TouchableOpacity, Image, View, Text, StyleSheet } from 'react-native';
-import React, {  useState, useCallback } from 'react';
+import { TouchableOpacity, Image, View, Text, StyleSheet, DeviceEventEmitter } from 'react-native';
+import React, { useState, useCallback, useContext, useEffect, useRef } from 'react';
 import { useFetchWithAuth } from '@/hooks/fetchWithAuth';
 import { useFocusEffect } from '@react-navigation/native';
-import { BASE_URL } from '@/hooks/api';
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { AuthContext } from '@/context/AuthContext';
+import { getConversations } from '@/hooks/chatApi';
+import * as Notifications from 'expo-notifications';
 
 export default function AdminTabsLayout() {
     const router = useRouter();
     const { fetchWithAuth } = useFetchWithAuth();
+    const { isLoggedIn, accessToken } = useContext(AuthContext);
     const [unreadCount, setUnreadCount] = useState(0);
+    const inflightRef = useRef(false);
+    const abortedRef = useRef(false);
+
+    const fetchUnread = useCallback(async () => {
+        if (isLoggedIn !== true || !accessToken || inflightRef.current) return;
+        inflightRef.current = true;
+        try {
+            const data = await getConversations(fetchWithAuth);
+            if (abortedRef.current) return;
+            const count = Array.isArray(data)
+                ? data.reduce((sum, conversation) => sum + Math.max(0, conversation.unread_count || 0), 0)
+                : 0;
+            setUnreadCount(count);
+            await Notifications.setBadgeCountAsync(count);
+        } catch (e) {
+            if (!abortedRef.current) console.error("❌ Chyba pri načítaní neprečítaných správ:", e);
+        } finally {
+            inflightRef.current = false;
+        }
+    }, [isLoggedIn, accessToken, fetchWithAuth]);
 
     useFocusEffect(
         useCallback(() => {
-            const fetchUnread = async () => {
-                try {
-                    const res = await fetchWithAuth(`${BASE_URL}/chat-users/`);
-                    if (res.ok) {
-                        const data = await res.json();
-                        const count = data.filter((u: any) => u.has_unread).length;
-                        setUnreadCount(count);
-                    }
-                } catch (e) {
-                    console.error("❌ Chyba pri načítaní neprečítaných správ:", e);
-                }
+            abortedRef.current = false;
+            void fetchUnread();
+            return () => {
+                abortedRef.current = true;
             };
-            fetchUnread();
-        }, [])
+        }, [fetchUnread])
     );
+
+    useEffect(() => {
+        if (!isLoggedIn || !accessToken) return;
+        const id = setInterval(() => { void fetchUnread(); }, 60000);
+        return () => clearInterval(id);
+    }, [isLoggedIn, accessToken, fetchUnread]);
+
+    useEffect(() => {
+        const sub = DeviceEventEmitter.addListener("refreshChatUnread", () => {
+            void fetchUnread();
+        });
+        return () => sub.remove();
+    }, [fetchUnread]);
 
     const insets = useSafeAreaInsets();
 
@@ -39,7 +67,6 @@ export default function AdminTabsLayout() {
             screenOptions={{
                 headerStyle: {
                     height: 40 + insets.top,
-                    paddingTop: insets.top,
                     backgroundColor: "#fff",
                 },
                 tabBarActiveTintColor: '#D32F2F',     // 🔥 farba aktívnej ikony (napr. červená)

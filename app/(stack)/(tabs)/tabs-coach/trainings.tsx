@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useContext, useRef } from 'react';
+import React, { useCallback, useEffect, useState, useContext, useRef } from 'react';
 import {
     View,
     Text,
@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { useFetchWithAuth } from '@/hooks/fetchWithAuth';
 import { BASE_URL } from '@/hooks/api';
+import { readJsonArrayOrThrow } from '@/hooks/readResponse';
 import { useRouter } from 'expo-router';
 import { AuthContext } from '@/context/AuthContext';
 import { useFocusEffect } from '@react-navigation/native';
@@ -65,7 +66,7 @@ export default function TrainingsScreen() {
     const inflightRef = useRef(false);
     const abortedRef = useRef(false);
 
-const fetchTrainings = async (season?: string, month?: number) => {
+const fetchTrainings = useCallback(async (season?: string, month?: number) => {
     if (inflightRef.current) return;
     inflightRef.current = true;
     setLoading(true);
@@ -77,36 +78,36 @@ const fetchTrainings = async (season?: string, month?: number) => {
 
         console.log("📡 Fetching:", url);
         const res = await fetchWithAuth(url);
-        const data: Training[] = res.ok ? await res.json() : [];
+        const trainingsData = await readJsonArrayOrThrow<Training>(res, "Nepodarilo sa načítať tréningy.");
         if (abortedRef.current) return;
 
-        setTrainings([...data].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+        setTrainings(trainingsData.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
     } catch (err) {
         console.error("Chyba pri načítaní tréningov:", err);
     } finally {
         inflightRef.current = false;
         if (!abortedRef.current) setLoading(false);
     }
-};
+}, [fetchWithAuth]);
 
     
     useEffect(() => {
         if (!isLoggedIn || !accessToken) return;
         abortedRef.current = false;
-        fetchTrainings(selectedSeason, selectedMonth);
+        void fetchTrainings(selectedSeason, selectedMonth);
         return () => {
             abortedRef.current = true;
         };
-    }, [isLoggedIn, accessToken]);
+    }, [isLoggedIn, accessToken, fetchTrainings, selectedMonth, selectedSeason]);
 
     useFocusEffect(
     React.useCallback(() => {
         abortedRef.current = false;
-        fetchTrainings(selectedSeason, selectedMonth);
+        void fetchTrainings(selectedSeason, selectedMonth);
         return () => {
             abortedRef.current = true;
         };
-    }, [selectedSeason, selectedMonth])
+    }, [fetchTrainings, selectedSeason, selectedMonth])
 );
     const allCategories = Array.from(new Set(trainings.map(t => t.category_name)));
 

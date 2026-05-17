@@ -1,6 +1,6 @@
 // app/(tabs)/matches.tsx
 
-import React, { useEffect, useState, useContext } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
     View,
     Text,
@@ -8,14 +8,15 @@ import {
     ActivityIndicator,
     TouchableOpacity,
     StyleSheet,
-    Alert,
     ImageBackground,
     RefreshControl,
 } from "react-native";
 import { useFetchWithAuth } from "@/hooks/fetchWithAuth";
-import { AuthContext } from "@/context/AuthContext";
 import { BASE_URL } from "@/hooks/api";
 import { router } from "expo-router";
+import { COLORS } from "@/constants/Colors";
+
+type MatchFilter = "NEODOHRANÉ" | "ODOHRANÉ";
 
 type Match = {
     id: number;
@@ -27,180 +28,435 @@ type Match = {
     category: number;
     category_name: string;
     user_status: "confirmed" | "declined" | "unknown";
-    is_home: boolean; 
+    is_home: boolean;
 };
+
+function getFilterParam(filter: MatchFilter) {
+    return filter === "ODOHRANÉ" ? "past" : "upcoming";
+}
+
+function formatMatchDate(dateString: string) {
+    const date = new Date(dateString);
+
+    if (Number.isNaN(date.getTime())) {
+        return {
+            time: "--:--",
+            date: "Neplatný dátum",
+        };
+    }
+
+    return {
+        time: date.toLocaleTimeString("sk-SK", {
+            hour: "2-digit",
+            minute: "2-digit",
+        }),
+        date: date.toLocaleDateString("sk-SK", {
+            weekday: "long",
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+        }),
+    };
+}
 
 export default function MatchesScreen() {
     const { fetchWithAuth } = useFetchWithAuth();
-    const { userRoles } = useContext(AuthContext);
 
     const [matches, setMatches] = useState<Match[]>([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
-    const [filter, setFilter] = useState<"NEODOHRANÉ" | "ODOHRANÉ">("NEODOHRANÉ");
+    const [filter, setFilter] = useState<MatchFilter>("NEODOHRANÉ");
 
-    const getFilterParam = (f: "NEODOHRANÉ" | "ODOHRANÉ") =>
-        f === "ODOHRANÉ" ? "past" : "upcoming";
+    const fetchMatches = useCallback(
+        async (filterParam: "past" | "upcoming", isRefresh = false) => {
+            try {
+                if (!isRefresh) {
+                    setLoading(true);
+                }
 
-    const fetchMatches = async (filterParam: "past" | "upcoming", isRefresh = false) => {
-        try {
-            if (!isRefresh) setLoading(true);
-            const response = await fetchWithAuth(`${BASE_URL}/matches-coach/?filter=${filterParam}`);
-            if (response.ok) {
+                const response = await fetchWithAuth(
+                    `${BASE_URL}/matches-coach/?filter=${filterParam}`
+                );
+
+                if (!response.ok) {
+                    console.error("❌ Chyba pri načítaní zápasov:", await response.text());
+                    return;
+                }
+
                 const data = await response.json();
-                setMatches(data);
-            } else {
-                console.error("❌ Chyba pri načítaní zápasov:", await response.text());
+                const matchesData: Match[] = Array.isArray(data) ? data : [];
+
+                const sorted = matchesData.sort((a, b) => {
+                    const aTime = new Date(a.date).getTime();
+                    const bTime = new Date(b.date).getTime();
+
+                    if (filterParam === "past") {
+                        return bTime - aTime;
+                    }
+
+                    return aTime - bTime;
+                });
+
+                setMatches(sorted);
+            } catch (err) {
+                console.error("❌ Fetch error:", err);
+            } finally {
+                if (!isRefresh) {
+                    setLoading(false);
+                }
+
+                setRefreshing(false);
             }
-        } catch (err) {
-            console.error("❌ Fetch error:", err);
-        } finally {
-            if (!isRefresh) setLoading(false);
-            setRefreshing(false);
-        }
-    };
+        },
+        [fetchWithAuth]
+    );
 
-    // 🔹 Načítaj po prvom otvorení len neodohrané
     useEffect(() => {
-        fetchMatches("upcoming");
-    }, []);
-
-    // 🔹 Keď sa zmení filter, načítaj znova
-    useEffect(() => {
-        fetchMatches(getFilterParam(filter));
-    }, [filter]);
+        void fetchMatches(getFilterParam(filter));
+    }, [fetchMatches, filter]);
 
     const onRefresh = async () => {
         setRefreshing(true);
         await fetchMatches(getFilterParam(filter), true);
     };
 
-    const grouped = matches.reduce((acc, match) => {
-        if (!acc[match.category_name]) acc[match.category_name] = [];
-        acc[match.category_name].push(match);
-        return acc;
-    }, {} as Record<string, Match[]>);
+    const groupedMatches = useMemo(() => {
+        return matches.reduce<Record<string, Match[]>>((acc, match) => {
+            if (!acc[match.category_name]) {
+                acc[match.category_name] = [];
+            }
 
-    if (loading) return <ActivityIndicator style={{ marginTop: 40 }} />;
+            acc[match.category_name].push(match);
+            return acc;
+        }, {});
+    }, [matches]);
+
+    if (loading) {
+        return (
+            <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={COLORS.primary} />
+                <Text style={styles.loadingText}>Načítavam zápasy...</Text>
+            </View>
+        );
+    }
 
     return (
         <ScrollView
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-            style={{ padding: 20 }}
+            style={styles.container}
+            contentContainerStyle={styles.content}
+            refreshControl={
+                <RefreshControl
+                    refreshing={refreshing}
+                    onRefresh={onRefresh}
+                    tintColor={COLORS.primary}
+                    colors={[COLORS.primary]}
+                />
+            }
+            showsVerticalScrollIndicator={false}
         >
-            {/* 🔹 Filter */}
             <View style={styles.filterRow}>
-                {["NEODOHRANÉ", "ODOHRANÉ"].map((f) => (
-                    <TouchableOpacity
-                        key={f}
-                        onPress={() => setFilter(f as any)}
-                        style={[styles.filterButton, filter === f && styles.filterButtonActive]}
-                    >
-                        <Text style={filter === f ? styles.filterTextActive : styles.filterText}>
-                            {f}
-                        </Text>
-                    </TouchableOpacity>
-                ))}
+                {(["NEODOHRANÉ", "ODOHRANÉ"] as MatchFilter[]).map((filterItem) => {
+                    const isActive = filter === filterItem;
+
+                    return (
+                        <TouchableOpacity
+                            key={filterItem}
+                            onPress={() => setFilter(filterItem)}
+                            activeOpacity={0.85}
+                            style={[
+                                styles.filterButton,
+                                isActive && styles.filterButtonActive,
+                            ]}
+                        >
+                            <Text
+                                style={[
+                                    styles.filterText,
+                                    isActive && styles.filterTextActive,
+                                ]}
+                            >
+                                {filterItem}
+                            </Text>
+                        </TouchableOpacity>
+                    );
+                })}
             </View>
 
-            {/* 🔹 Zápasy podľa kategórií */}
-            {Object.entries(grouped).map(([category, items]) => (
-                <View key={category} style={{ marginBottom: 30 }}>
-                    <Text style={{ fontWeight: "bold", fontSize: 22, marginBottom: 15 }}>{category}</Text>
-
-                    {items.map((m) => {
-                        const matchDate = new Date(m.date);
-
-                        return (
-                            <TouchableOpacity key={m.id} onPress={() => router.push(`/match/${m.id}`)}>
-                            <ImageBackground
-                                source={
-                                m.is_home
-                                    ? require("@/assets/images/zapas_doma.png")  // 🏠 domáci zápas
-                                    : require("@/assets/images/zapas_vonku.png") // 🚌 vonkajší zápas
-                                }
-                                imageStyle={{ borderRadius: 10 }}
-                                style={styles.card}
-                            >
-                                    <Text style={styles.title}>{m.opponent}</Text>
-                                    <Text style={styles.date}>
-                                        {matchDate.toLocaleTimeString("sk-SK", {
-                                            hour: "2-digit",
-                                            minute: "2-digit",
-                                        })}{" "}
-                                        •{" "}
-                                        {matchDate.toLocaleDateString("sk-SK", {
-                                            weekday: "long",
-                                            year: "numeric",
-                                            month: "long",
-                                            day: "numeric",
-                                        })}
-                                    </Text>
-                                    <Text style={styles.location}>📍 {m.location}</Text>
-                                </ImageBackground>
-                            </TouchableOpacity>
-                        );
-                    })}
+            {Object.entries(groupedMatches).length === 0 ? (
+                <View style={styles.emptyCard}>
+                    <Text style={styles.emptyTitle}>Žiadne zápasy</Text>
+                    <Text style={styles.emptyText}>
+                        Pre zvolený filter momentálne nie sú dostupné žiadne zápasy.
+                    </Text>
                 </View>
-            ))}
+            ) : (
+                Object.entries(groupedMatches).map(([category, items]) => (
+                    <View key={category} style={styles.categorySection}>
+                        <Text style={styles.categoryTitle}>{category}</Text>
+
+                        {items.map((match) => {
+                            const formatted = formatMatchDate(match.date);
+                            const imageSource = match.is_home
+                                ? require("@/assets/images/zapas_doma.png")
+                                : require("@/assets/images/zapas_vonku.png");
+
+                            return (
+                                <TouchableOpacity
+                                    key={match.id}
+                                    activeOpacity={0.9}
+                                    onPress={() => router.push(`/match/${match.id}`)}
+                                    style={styles.touchableCard}
+                                >
+                                    <ImageBackground
+                                        source={imageSource}
+                                        imageStyle={styles.cardImage}
+                                        style={styles.card}
+                                    >
+                                        <View style={styles.cardOverlay}>
+                                            <View style={styles.cardTopRow}>
+                                                <View style={styles.matchTypeBadge}>
+                                                    <Text style={styles.matchTypeText}>
+                                                        {match.is_home ? "DOMA" : "VONKU"}
+                                                    </Text>
+                                                </View>
+
+                                                <Text style={styles.timeText}>{formatted.time}</Text>
+                                            </View>
+
+                                            <Text style={styles.title} numberOfLines={2}>
+                                                {match.opponent || "Súper nezadaný"}
+                                            </Text>
+
+                                            <Text style={styles.date} numberOfLines={1}>
+                                                {formatted.date}
+                                            </Text>
+
+                                            <View style={styles.locationRow}>
+                                                <Text style={styles.locationPin}>📍</Text>
+                                                <Text style={styles.location} numberOfLines={1}>
+                                                    {match.location || "Miesto nezadané"}
+                                                </Text>
+                                            </View>
+
+                                            {match.description ? (
+                                                <Text style={styles.description} numberOfLines={2}>
+                                                    {match.description}
+                                                </Text>
+                                            ) : null}
+                                        </View>
+                                    </ImageBackground>
+                                </TouchableOpacity>
+                            );
+                        })}
+                    </View>
+                ))
+            )}
         </ScrollView>
     );
 }
 
 const styles = StyleSheet.create({
+    container: {
+        flex: 1,
+        backgroundColor: COLORS.background,
+    },
+
+    content: {
+        padding: 14,
+        paddingBottom: 26,
+    },
+
+    loadingContainer: {
+        flex: 1,
+        justifyContent: "center",
+        alignItems: "center",
+        backgroundColor: COLORS.background,
+    },
+
+    loadingText: {
+        marginTop: 10,
+        fontSize: 14,
+        color: COLORS.textMuted,
+        fontWeight: "600",
+    },
+
     filterRow: {
         flexDirection: "row",
-        justifyContent: "space-between",
-        gap: 5,
-        marginBottom: 20,
+        gap: 8,
+        marginBottom: 18,
+        backgroundColor: COLORS.card,
+        borderRadius: 16,
+        padding: 6,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+        shadowColor: COLORS.shadow,
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.04,
+        shadowRadius: 4,
+        elevation: 1,
     },
+
     filterButton: {
         flex: 1,
         alignItems: "center",
-        paddingVertical: 10,
-        borderWidth: 1,
-        borderColor: "#ccc",
-        borderRadius: 20,
-        marginHorizontal: 5,
-    },
-    filterButtonActive: {
-        backgroundColor: "#D32F2F",
-    },
-    filterText: {
-        color: "#444",
-        fontWeight: "500",
-        fontSize: 12,
-    },
-    filterTextActive: {
-        color: "#fff",
-        fontWeight: "bold",
-        fontSize: 12,
-    },
-    card: {
-        padding: 16,
+        paddingVertical: 9,
         borderRadius: 12,
-        shadowColor: "#000",
-        shadowOpacity: 0.1,
-        shadowOffset: { width: 0, height: 2 },
-        shadowRadius: 6,
-        elevation: 3,
-        marginBottom: 16,
-        backgroundColor: "#fff",
+        backgroundColor: "transparent",
     },
-    title: {
+
+    filterButtonActive: {
+        backgroundColor: COLORS.primary,
+    },
+
+    filterText: {
+        color: COLORS.textMuted,
+        fontWeight: "800",
+        fontSize: 12,
+    },
+
+    filterTextActive: {
+        color: COLORS.white,
+        fontWeight: "900",
+    },
+
+    emptyCard: {
+        backgroundColor: COLORS.card,
+        borderRadius: 14,
+        padding: 20,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+        alignItems: "center",
+        marginTop: 20,
+    },
+
+    emptyTitle: {
         fontSize: 18,
-        fontWeight: "bold",
-        color: "#8C1919",
+        fontWeight: "800",
+        color: COLORS.text,
         marginBottom: 6,
     },
+
+    emptyText: {
+        fontSize: 14,
+        color: COLORS.textMuted,
+        textAlign: "center",
+        lineHeight: 20,
+    },
+
+    categorySection: {
+        marginBottom: 22,
+    },
+
+    categoryTitle: {
+        fontWeight: "800",
+        fontSize: 18,
+        marginBottom: 12,
+        color: COLORS.text,
+    },
+
+    touchableCard: {
+        marginBottom: 14,
+        borderRadius: 14,
+    },
+
+    card: {
+        borderRadius: 14,
+        overflow: "hidden",
+        backgroundColor: COLORS.card,
+        shadowColor: COLORS.shadow,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.08,
+        shadowRadius: 5,
+        elevation: 3,
+    },
+
+    cardImage: {
+        borderRadius: 14,
+        resizeMode: "cover",
+        opacity: 0.92,
+    },
+
+    cardOverlay: {
+        padding: 14,
+        minHeight: 138,
+        borderRadius: 14,
+        backgroundColor: "rgba(255,255,255,0.62)",
+    },
+
+    cardTopRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        marginBottom: 8,
+    },
+
+    matchTypeBadge: {
+        alignSelf: "flex-start",
+        backgroundColor: "rgba(255,241,241,0.86)",
+        paddingHorizontal: 9,
+        paddingVertical: 4,
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: "rgba(211,47,47,0.2)",
+    },
+
+    matchTypeText: {
+        fontSize: 10,
+        fontWeight: "900",
+        color: COLORS.primary,
+        letterSpacing: 0.4,
+    },
+
+    timeText: {
+        fontSize: 15,
+        fontWeight: "900",
+        color: COLORS.primaryDark,
+        textShadowColor: "rgba(255,255,255,0.7)",
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 2,
+    },
+
+    title: {
+        fontSize: 20,
+        fontWeight: "900",
+        color: COLORS.primaryDark,
+        marginBottom: 5,
+        textShadowColor: "rgba(255,255,255,0.72)",
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 2,
+    },
+
     date: {
-        color: "#555",
-        fontWeight: "bold",
-        marginBottom: 4,
-    },
-    location: {
-        fontSize: 16,
-        color: "#333",
+        color: COLORS.textMuted,
+        fontWeight: "700",
         marginBottom: 6,
+        fontSize: 14,
+        textTransform: "capitalize",
+    },
+
+    locationRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        marginTop: 2,
+    },
+
+    locationPin: {
+        fontSize: 14,
+        color: COLORS.pin,
+        marginRight: 4,
+    },
+
+    location: {
+        fontSize: 15,
+        color: COLORS.textSecondary,
+        fontWeight: "600",
+        flex: 1,
+    },
+
+    description: {
+        marginTop: 8,
+        fontSize: 13,
+        color: COLORS.textMuted,
+        fontWeight: "600",
+        lineHeight: 18,
     },
 });

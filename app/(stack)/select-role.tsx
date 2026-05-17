@@ -43,14 +43,14 @@ export default function SelectRoleRedirect() {
       const roleName = selectedRole.role.toLowerCase();
 
       if (roleName === 'player') {
-        router.replace('(stack)/(tabs)/tabs-player/news');
+        router.replace('/(stack)/(tabs)/tabs-player/news');
       } else if (roleName === 'coach') {
-        router.replace('(stack)/(tabs)/tabs-coach/news');
+        router.replace('/(stack)/(tabs)/tabs-coach/news');
       } else if (roleName === 'admin') {
-        router.replace('/tabs-admin');
+        router.replace('/(stack)/(tabs)/tabs-admin');
       }
     }
-  }, [isLoggedIn, accessToken, userDetails, userRoles]);
+  }, [isLoggedIn, accessToken, userDetails, userRoles, router, setCurrentRole]);
 
   return null;
 }

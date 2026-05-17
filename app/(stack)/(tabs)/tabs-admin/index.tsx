@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useContext } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -11,7 +11,6 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { AuthContext } from "@/context/AuthContext";
 import { useFetchWithAuth } from "@/hooks/fetchWithAuth";
 import { BASE_URL } from "@/hooks/api";
 
@@ -23,7 +22,6 @@ type Category = {
 
 export default function CategoriesScreen() {
   const { fetchWithAuth } = useFetchWithAuth();
-  const { userClub } = useContext(AuthContext);
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,17 +29,17 @@ export default function CategoriesScreen() {
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
 
-  const fetchCategories = async () => {
+  const fetchCategories = useCallback(async () => {
     try {
       const res = await fetchWithAuth(`${BASE_URL}/categories-in-club/`);
       const data = await res.json();
-      setCategories(data);
+      setCategories(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error("❌ Chyba pri načítaní kategórií:", err);
     } finally {
       setLoading(false);
     }
-  };
+  }, [fetchWithAuth]);
 
   const handleAddCategory = async () => {
     if (!newName.trim()) {
@@ -61,7 +59,7 @@ export default function CategoriesScreen() {
         setModalVisible(false);
         setNewName("");
         setNewDesc("");
-        fetchCategories();
+        void fetchCategories();
       } else {
         const err = await res.json();
         Alert.alert("❌ Chyba", err.detail || "Nepodarilo sa vytvoriť kategóriu");
@@ -88,7 +86,7 @@ export default function CategoriesScreen() {
               });
               if (res.ok) {
                 Alert.alert("✅ Kategória vymazaná");
-                fetchCategories();
+                void fetchCategories();
               } else {
                 Alert.alert("❌ Chyba", "Nepodarilo sa vymazať kategóriu.");
               }
@@ -103,8 +101,8 @@ export default function CategoriesScreen() {
   };
 
   useEffect(() => {
-    fetchCategories();
-  }, []);
+    void fetchCategories();
+  }, [fetchCategories]);
 
   if (loading) return <ActivityIndicator style={{ marginTop: 50 }} />;
 

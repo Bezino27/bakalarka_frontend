@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -7,18 +7,20 @@ import {
   StyleSheet,
   ActivityIndicator,
   ScrollView,
-  DeviceEventEmitter
+  DeviceEventEmitter,
+  RefreshControl,
 } from "react-native";
 import { useFetchWithAuth } from "@/hooks/fetchWithAuth";
 import { BASE_URL } from "@/hooks/api";
 import { useFocusEffect } from "@react-navigation/native";
+import { COLORS } from "@/constants/Colors";
 
 type Announcement = {
   id: number;
   title: string;
   content: string;
   created_by: number;
-  created_by_name: string;   // celé meno
+  created_by_name: string;
   club: number;
   category: number | null;
   date_created: string;
@@ -27,210 +29,420 @@ type Announcement = {
 
 export default function AnnouncementsScreen() {
   const { fetchWithAuth } = useFetchWithAuth();
+
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<Announcement | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const fetchAnnouncements = useCallback(async () => {
+  const [selected, setSelected] = useState<Announcement | null>(null);
+  const isFetchingAnnouncementsRef = useRef(false);
+  const lastAnnouncementsFetchRef = useRef(0);
+  const markingReadIdsRef = useRef<Set<number>>(new Set());
+
+  const fetchAnnouncements = useCallback(async (force = false) => {
+    const now = Date.now();
+
+    if (isFetchingAnnouncementsRef.current) return;
+
+    if (!force && now - lastAnnouncementsFetchRef.current < 15000) {
+      return;
+    }
+
+    isFetchingAnnouncementsRef.current = true;
+    lastAnnouncementsFetchRef.current = now;
+
     try {
+      if (force) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+
       const res = await fetchWithAuth(`${BASE_URL}/announcements/`);
-      if (!res.ok) throw new Error("Nepodarilo sa načítať oznamy");
-      const data = await res.json();
-      setAnnouncements(data);
+
+      if (!res.ok) {
+        console.log("Announcements fetch failed:", res.status);
+        return;
+      }
+
+      const data: Announcement[] = await res.json();
+
+      const sorted = [...data].sort(
+        (a, b) =>
+          new Date(b.date_created).getTime() -
+          new Date(a.date_created).getTime()
+      );
+
+      setAnnouncements(sorted);
     } catch (err) {
-      console.error("❌ Chyba pri načítaní oznamov:", err);
+      console.log("Announcements fetch error:", err);
     } finally {
+      isFetchingAnnouncementsRef.current = false;
       setLoading(false);
+      setRefreshing(false);
     }
   }, [fetchWithAuth]);
 
   const markRead = async (id: number) => {
+    if (markingReadIdsRef.current.has(id)) return;
+
+    const target = announcements.find((announcement) => announcement.id === id);
+    if (target?.read_at) return;
+
+    markingReadIdsRef.current.add(id);
+
     try {
-      await fetchWithAuth(`${BASE_URL}/announcements/${id}/read/`, {
+      const response = await fetchWithAuth(`${BASE_URL}/announcements/${id}/read/`, {
         method: "POST",
       });
+
+      if (!response.ok) {
+        console.log("Announcement mark as read failed:", response.status);
+        return;
+      }
+
+      const now = new Date().toISOString();
+
       setAnnouncements((prev) =>
-        prev.map((a) =>
-          a.id === id ? { ...a, read_at: new Date().toISOString() } : a
+        prev.map((announcement) =>
+          announcement.id === id
+            ? { ...announcement, read_at: now }
+            : announcement
         )
       );
-      DeviceEventEmitter.emit("refreshAnnouncements"); // ✅ oznám layoutu
+
+      setSelected((prev) =>
+        prev && prev.id === id ? { ...prev, read_at: now } : prev
+      );
+
+      DeviceEventEmitter.emit("refreshAnnouncements");
     } catch (err) {
-      console.error("❌ Chyba pri označení oznamu ako prečítaného:", err);
+      console.log("Announcement mark as read error:", err);
+    } finally {
+      markingReadIdsRef.current.delete(id);
     }
   };
 
-    // refresh pri prvom mountnutí
-    useEffect(() => {
-      fetchAnnouncements();
-    }, [fetchAnnouncements]);
+  useEffect(() => {
+    void fetchAnnouncements();
+  }, [fetchAnnouncements]);
 
-    // refresh pri návrate na screen
-    useFocusEffect(
-      useCallback(() => {
-        fetchAnnouncements();
-      }, [fetchAnnouncements])
-    );
-
-const renderItem = ({ item }: { item: Announcement }) => {
-  const isRead = !!item.read_at;
-
-  return (
-    <TouchableOpacity
-      style={[styles.card, !isRead && styles.unreadCard]}
-      onPress={() => {
-        setSelected(item);
-        if (!isRead) markRead(item.id);
-      }}
-    >
-      <Text style={styles.title} numberOfLines={1} ellipsizeMode="tail">
-        {item.title}
-      </Text>
-      <Text style={styles.meta}>
-        {item.created_by_name} •{" "}
-        {new Date(item.date_created).toLocaleString("sk-SK")}
-      </Text>
-
-      {isRead ? (
-        <Text style={styles.preview} numberOfLines={2} ellipsizeMode="tail">
-          {item.content}
-        </Text>
-      ) : (
-        <Text style={styles.unreadPreview}>📩 Neotvorený oznam</Text>
-      )}
-
-      {item.read_at && (
-        <Text style={styles.readMeta}>
-          Prečítané: {new Date(item.read_at).toLocaleString("sk-SK")}
-        </Text>
-      )}
-    </TouchableOpacity>
+  useFocusEffect(
+    useCallback(() => {
+      void fetchAnnouncements();
+    }, [fetchAnnouncements])
   );
-};
+
+  const openAnnouncement = (item: Announcement) => {
+    setSelected(item);
+
+    if (!item.read_at) {
+      void markRead(item.id);
+    }
+  };
+
+  const renderItem = ({ item }: { item: Announcement }) => {
+    const isRead = Boolean(item.read_at);
+
+    return (
+      <TouchableOpacity
+        style={[styles.card, !isRead && styles.unreadCard]}
+        activeOpacity={0.88}
+        onPress={() => openAnnouncement(item)}
+      >
+        <View style={styles.cardTopRow}>
+          <Text style={styles.title} numberOfLines={1} ellipsizeMode="tail">
+            {item.title}
+          </Text>
+
+          {!isRead && <View style={styles.unreadDot} />}
+        </View>
+
+        <Text style={styles.meta}>
+          {item.created_by_name} •{" "}
+          {new Date(item.date_created).toLocaleString("sk-SK")}
+        </Text>
+
+        {isRead ? (
+          <Text style={styles.preview} numberOfLines={2} ellipsizeMode="tail">
+            {item.content}
+          </Text>
+        ) : (
+          <Text style={styles.unreadPreview}>📩 Neotvorený oznam</Text>
+        )}
+
+        {item.read_at && (
+          <Text style={styles.readMeta}>
+            Prečítané: {new Date(item.read_at).toLocaleString("sk-SK")}
+          </Text>
+        )}
+      </TouchableOpacity>
+    );
+  };
 
   if (loading) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator size="large" color="#D32F2F" />
+        <ActivityIndicator size="large" color={COLORS.primary} />
+        <Text style={styles.loadingText}>Načítavam oznamy...</Text>
       </View>
     );
   }
 
-  // DETAIL VIEW
   if (selected) {
     return (
-      <ScrollView contentContainerStyle={styles.detailContainer}>
-        <Text style={styles.detailTitle}>{selected.title}</Text>
-        <Text style={styles.detailMeta}>
-          {selected.created_by_name} •{" "}
-          {new Date(selected.date_created).toLocaleString("sk-SK")}
-        </Text>
-        {selected.read_at && (
-          <Text style={styles.detailRead}>
-            Prečítané: {new Date(selected.read_at).toLocaleString("sk-SK")}
-          </Text>
-        )}
-        <Text style={styles.detailContent}>{selected.content}</Text>
+      <ScrollView
+        style={styles.detailScreen}
+        contentContainerStyle={styles.detailScreenContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void fetchAnnouncements(true)}
+            tintColor={COLORS.primary}
+            colors={[COLORS.primary]}
+          />
+        }
+      >
+        <View style={styles.detailCard}>
+          <View style={styles.detailHeader}>
+            <Text style={styles.detailTitle}>{selected.title}</Text>
 
-        <TouchableOpacity
-          onPress={() => setSelected(null)}
-          style={styles.backButton}
-        >
-          <Text style={styles.backButtonText}>⬅️ Späť na zoznam</Text>
-        </TouchableOpacity>
+            <Text style={styles.detailMeta}>
+              {selected.created_by_name} •{" "}
+              {new Date(selected.date_created).toLocaleString("sk-SK")}
+            </Text>
+
+            {selected.read_at && (
+              <Text style={styles.detailRead}>
+                Prečítané: {new Date(selected.read_at).toLocaleString("sk-SK")}
+              </Text>
+            )}
+          </View>
+
+          <Text style={styles.detailContent}>{selected.content}</Text>
+
+          <TouchableOpacity
+            onPress={() => setSelected(null)}
+            style={styles.backButton}
+            activeOpacity={0.88}
+          >
+            <Text style={styles.backButtonText}>Späť na zoznam</Text>
+          </TouchableOpacity>
+        </View>
       </ScrollView>
     );
   }
 
-  // LIST VIEW
   return (
     <FlatList
       data={announcements}
       renderItem={renderItem}
       keyExtractor={(item) => String(item.id)}
-      contentContainerStyle={{ padding: 16 }}
-      refreshing={loading}
-      onRefresh={fetchAnnouncements}
+      contentContainerStyle={styles.listContent}
+      style={styles.list}
+      refreshing={refreshing}
+      onRefresh={() => void fetchAnnouncements(true)}
+      showsVerticalScrollIndicator={false}
+      ListEmptyComponent={
+        <View style={styles.emptyCard}>
+          <Text style={styles.emptyTitle}>Žiadne oznamy</Text>
+          <Text style={styles.emptyText}>
+            Momentálne nemáš žiadne dostupné oznamy.
+          </Text>
+        </View>
+      }
     />
   );
 }
 
 const styles = StyleSheet.create({
+  list: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+  },
+
+  listContent: {
+    padding: 16,
+    paddingBottom: 28,
+  },
+
+  center: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: COLORS.background,
+  },
+
+  loadingText: {
+    marginTop: 10,
+    color: COLORS.textMuted,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+
   card: {
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.card,
     padding: 16,
     marginBottom: 12,
-    borderRadius: 12,
-    shadowColor: "#000",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    shadowColor: COLORS.shadow,
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOpacity: 0.06,
+    shadowRadius: 5,
+    elevation: 2,
   },
+
   unreadCard: {
-    borderLeftWidth: 4,
-    borderLeftColor: "#D32F2F",
-    backgroundColor: "#fff8f8",
+    borderLeftWidth: 5,
+    borderLeftColor: COLORS.primary,
+    backgroundColor: COLORS.primarySoft,
   },
+
+  cardTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+
+  unreadDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: COLORS.primary,
+  },
+
   title: {
+    flex: 1,
     fontSize: 18,
-    fontWeight: "bold",
+    fontWeight: "900",
     marginBottom: 6,
-    color: "#111",
+    color: COLORS.text,
   },
+
   meta: {
     fontSize: 13,
-    color: "#777",
-    marginBottom: 4,
+    color: COLORS.textMuted,
+    marginBottom: 6,
+    fontWeight: "600",
   },
+
   readMeta: {
     fontSize: 12,
-    color: "#388e3c",
-    marginBottom: 6,
+    color: COLORS.success,
+    marginTop: 7,
     fontStyle: "italic",
+    fontWeight: "600",
   },
-  preview: { fontSize: 15, color: "#333" },
-  center: { flex: 1, justifyContent: "center", alignItems: "center" },
 
-  detailContainer: {
-    padding: 20,
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    margin: 16,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 5,
-    elevation: 4,
+  preview: {
+    fontSize: 15,
+    color: COLORS.textSecondary,
+    lineHeight: 20,
   },
+
+  unreadPreview: {
+    fontSize: 14,
+    color: COLORS.primary,
+    fontStyle: "italic",
+    marginTop: 4,
+    fontWeight: "700",
+  },
+
+  emptyCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 14,
+    padding: 22,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: "center",
+    marginTop: 20,
+  },
+
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: "900",
+    color: COLORS.text,
+    marginBottom: 6,
+  },
+
+  emptyText: {
+    fontSize: 14,
+    color: COLORS.textMuted,
+    textAlign: "center",
+    lineHeight: 20,
+  },
+
+  detailScreen: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+  },
+
+  detailScreenContent: {
+    padding: 16,
+    paddingBottom: 28,
+  },
+
+  detailCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 16,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    shadowColor: COLORS.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+
+  detailHeader: {
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+    paddingBottom: 12,
+    marginBottom: 14,
+  },
+
   detailTitle: {
     fontSize: 22,
-    fontWeight: "bold",
+    fontWeight: "900",
     marginBottom: 10,
-    color: "#111",
+    color: COLORS.text,
+    lineHeight: 27,
   },
-  detailMeta: { fontSize: 14, color: "#777", marginBottom: 6 },
+
+  detailMeta: {
+    fontSize: 14,
+    color: COLORS.textMuted,
+    marginBottom: 6,
+    fontWeight: "600",
+  },
+
   detailRead: {
     fontSize: 13,
-    color: "#388e3c",
-    marginBottom: 12,
+    color: COLORS.success,
     fontStyle: "italic",
+    fontWeight: "600",
   },
-  detailContent: { fontSize: 16, lineHeight: 22, color: "#333" },
+
+  detailContent: {
+    fontSize: 16,
+    lineHeight: 23,
+    color: COLORS.textSecondary,
+  },
 
   backButton: {
     marginTop: 24,
     padding: 14,
-    backgroundColor: "#D32F2F",
-    borderRadius: 10,
+    backgroundColor: COLORS.primary,
+    borderRadius: 12,
     alignItems: "center",
   },
-  backButtonText: { color: "#fff", fontWeight: "bold", fontSize: 16 },
-  unreadPreview: {
-  fontSize: 14,
-  color: "#D32F2F",
-  fontStyle: "italic",
-  marginTop: 6,
-},
 
+  backButtonText: {
+    color: COLORS.white,
+    fontWeight: "900",
+    fontSize: 16,
+  },
 });

@@ -1,7 +1,7 @@
 // app/training/manage/[userId].tsx
 
 import { useLocalSearchParams } from "expo-router";
-import { useEffect, useState, useContext } from "react";
+import { useCallback, useEffect, useState, useContext } from "react";
 import {
     View,
     Text,
@@ -40,10 +40,15 @@ export default function ManageTrainingScreen() {
     const { isLoggedIn, accessToken } = useContext(AuthContext); // ← pridaj toto
 
 
-    const fetchData = async () => {
+    const fetchData = useCallback(async () => {
+        if (!id) return;
+
         try {
             const resPlayers = await fetchWithAuth(`${BASE_URL}/training-attendance/${id}/`);
             const resTraining = await fetchWithAuth(`${BASE_URL}/training-detail/${id}/`);
+            if (!resPlayers.ok || !resTraining.ok) {
+                throw new Error("Nepodarilo sa načítať tréning.");
+            }
             const dataPlayers = await resPlayers.json();
             const dataTraining = await resTraining.json();
             setPlayers(dataPlayers);
@@ -57,7 +62,7 @@ export default function ManageTrainingScreen() {
         } finally {
             setLoading(false);
         }
-    };
+    }, [fetchWithAuth, id]);
 
     const handleUpdate = async (playerId: number, status: Player["status"]) => {
         try {
@@ -68,7 +73,7 @@ export default function ManageTrainingScreen() {
             });
             if (!res.ok) throw new Error();
             await fetchData();
-        } catch (err) {
+        } catch {
             Alert.alert("Chyba", "Nepodarilo sa aktualizovať účasť hráča.");
         }
     };
@@ -76,9 +81,9 @@ export default function ManageTrainingScreen() {
 
     useEffect(() => {
         if (id && isLoggedIn && accessToken) {
-            fetchData();
+            void fetchData();
         }
-    }, [id, isLoggedIn, accessToken]); // ← doplň závislosti
+    }, [id, isLoggedIn, accessToken, fetchData]); // ← doplň závislosti
 
     if (loading) return <ActivityIndicator style={{ marginTop: 50 }} />;
 
